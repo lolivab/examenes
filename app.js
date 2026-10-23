@@ -453,7 +453,7 @@ function viewInicio() {
         h("h3", {}, ex.title),
         h("p", { class: "muted grow" }, ex.description || ""),
         h("div", { class: "row" },
-          h("button", { class: "btn", type: "button", disabled: vacio, onclick: (ev) => startStudy(ex, ev.currentTarget) }, "Modo estudio"),
+          h("button", { class: "btn", type: "button", disabled: vacio, onclick: () => startStudy(ex) }, "Modo estudio"),
           h("button", { class: "btn ghost", type: "button", disabled: vacio, onclick: () => openSimCfg(ex) }, "Examen simulado")
         )
       ));
@@ -480,16 +480,18 @@ function questionBlock(q, i, total, opts) {
     if (rev) {
       if (o.id === rev.correct) cls += " correct";
       else if (o.id === opts.picked) cls += " wrong";
+    } else if (opts.verdict && o.id === opts.picked) {
+      cls += opts.verdict === "ok" ? " correct" : " wrong";
     }
     lista.append(h("button", {
       type: "button", class: cls, "aria-pressed": String(o.id === opts.picked),
-      disabled: !!rev, onclick: () => opts.onPick(o.id)
+      disabled: !!rev || !!opts.verdict, onclick: () => opts.onPick(o.id)
     }, h("span", { class: "lt" }, o.label), h("span", {}, o.text)));
   }
   return h("div", { class: "card" },
-    h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(total), "aria-valuenow": String(i + 1) },
-      h("i", { style: "width:" + Math.round(((i + 1) / total) * 100) + "%" })),
-    h("div", { class: "qmeta" }, "Pregunta " + (i + 1) + " de " + total + (q.topic ? " · " + q.topic : "")),
+    h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(total), "aria-valuenow": String(opts.pct != null ? opts.pct : i + 1) },
+      h("i", { style: "width:" + (opts.pct != null ? opts.pct : Math.round(((i + 1) / total) * 100)) + "%" })),
+    h("div", { class: "qmeta" }, (opts.meta || "Pregunta " + (i + 1) + " de " + total) + (q.topic ? " · " + q.topic : "")),
     h("h2", { class: "qtext" }, q.statement),
     lista,
     opts.extra || null
@@ -520,40 +522,80 @@ function subjectPicker(exam, sel, onChange) {
 
 const countOf = (exam, sel) => exam.topics.filter((t) => sel.has(t.name)).reduce((a, t) => a + t.count, 0);
 
-/* Modo estudio */
-function startStudy(exam, btn) {
-  if (exam.topics && exam.topics.length > 1) {
-    state.studyCfg = { exam, sel: new Set(exam.topics.map((t) => t.name)) };
-    go("estcfg");
-  } else {
-    beginStudy(exam, null, btn);
+/* Modo estudio: se repite lo fallado hasta resolver todo */
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+/* Reparte n entre asignaturas lo más parejo posible (con tope por asignatura) */
+function pickBalanced(qs, n) {
+  const grupos = new Map();
+  for (const q of qs) { const k = q.topic || ""; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(q); }
+  const gs = [...grupos.values()].map(shuffle);
+  const cupo = gs.map(() => 0);
+  let resto = Math.min(n, qs.length);
+  while (resto > 0) {
+    const libres = gs.map((g, i) => i).filter((i) => cupo[i] < gs[i].length);
+    if (!libres.length) break;
+    const orden = shuffle(libres.slice());
+    for (const i of orden) { if (resto > 0 && cupo[i] < gs[i].length) { cupo[i]++; resto--; } }
   }
+  return shuffle(gs.flatMap((g, i) => g.slice(0, cupo[i])));
+}
+
+function countControls(c, total) {
+  if (c.count > total) c.count = total;
+  if (c.count < 1) c.count = 1;
+  const opciones = [10, 20, 50].filter((n) => n < total).map((n) => ({ n, label: String(n) }));
+  opciones.push({ n: total, label: total === 1 ? "1 pregunta" : "Todas (" + total + ")" });
+  const seg = h("div", { class: "seg", role: "group", "aria-label": "Cantidad de preguntas" });
+  for (const o of opciones) {
+    seg.append(h("button", { type: "button", "aria-pressed": String(c.count === o.n), onclick: () => { c.count = o.n; render(); } }, o.label));
+  }
+  const entrada = h("input", {
+    type: "number", min: "1", max: String(total), value: String(c.count), inputmode: "numeric", class: "num",
+    "aria-label": "Cantidad de preguntas",
+    onchange: (ev) => { const v = parseInt(ev.target.value, 10); c.count = Number.isFinite(v) ? Math.max(1, Math.min(total, v)) : c.count; render(); }
+  });
+  return h("div", { class: "row" }, seg, entrada);
+}
+
+function startStudy(exam) {
+  const topics = exam.topics || [];
+  state.studyCfg = { exam, sel: new Set(topics.map((t) => t.name)), count: Math.min(20, exam.total) };
+  go("estcfg");
 }
 
 function viewEstCfg() {
   const c = state.studyCfg;
-  const n = countOf(c.exam, c.sel);
-  const todas = c.sel.size === c.exam.topics.length;
+  const topics = c.exam.topics || [];
+  const total = topics.length ? countOf(c.exam, c.sel) : c.exam.total;
+  const k = c.sel.size;
   return h("section", { class: "stack" },
     h("div", {}, h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Volver")),
     h("div", { class: "card stack", style: "max-width:640px" },
       h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Modo estudio"),
       h("p", { class: "muted" }, c.exam.title),
-      h("div", {}, h("label", {}, "¿De qué asignaturas quieres ver preguntas?"),
-        subjectPicker(c.exam, c.sel, render)),
-      h("p", { class: "hint" }, plural(n, "pregunta", "preguntas") + " seleccionadas. Puedes elegir una o varias asignaturas."),
-      h("button", { class: "btn", type: "button",
-        onclick: (ev) => beginStudy(c.exam, todas ? null : [...c.sel], ev.currentTarget) }, "Comenzar a estudiar")
+      topics.length > 1 ? h("div", {}, h("label", {}, "Asignaturas (una o más)"), subjectPicker(c.exam, c.sel, render)) : null,
+      h("div", {}, h("label", {}, "¿Cuántas preguntas quieres estudiar? (máx. " + total + ")"), countControls(c, total)),
+      h("p", { class: "hint" }, (topics.length > 1 && k > 1 ? "Se tomarán preguntas al azar de " + k + " asignaturas, en cantidades similares. " : "Las preguntas se eligen al azar. ") +
+        "Si respondes mal, la pregunta vuelve a aparecer más adelante hasta que la aciertes. La respuesta correcta solo se muestra si la pides."),
+      h("button", { class: "btn", type: "button", onclick: (ev) => beginStudy(ev.currentTarget) }, "Comenzar a estudiar")
     )
   );
 }
 
-async function beginStudy(exam, topics, btn) {
+async function beginStudy(btn) {
+  const { exam, sel, count } = state.studyCfg;
+  const todas = !exam.topics || !exam.topics.length || sel.size === exam.topics.length;
   btn.disabled = true;
+  setNotice(null);
   try {
-    const qs = await loadQuestions(exam.id, null, topics);
-    if (!qs.length) { btn.disabled = false; setNotice("warn", "Este banco aún no tiene preguntas."); render(); return; }
-    state.study = { exam, qs, i: 0, picked: {}, revealed: {} };
+    const todo = await loadQuestions(exam.id, null, todas ? null : [...sel]);
+    if (!todo.length) { btn.disabled = false; setNotice("warn", "Este banco aún no tiene preguntas."); render(); return; }
+    const qs = pickBalanced(todo, count);
+    state.study = { exam, pending: qs, total: qs.length, firstTry: new Set(), failed: new Set(), truth: {}, picked: null, result: null, rev: false, busy: false, attempts: 0, repeat: false };
     go("estudio");
   } catch (e) {
     btn.disabled = false;
@@ -561,58 +603,101 @@ async function beginStudy(exam, topics, btn) {
   }
 }
 
+async function studyTruth(q) {
+  const s = state.study;
+  if (s.truth[q.id]) return s.truth[q.id];
+  const { data, error } = await sb.rpc("reveal_answer", { p_question_id: q.id });
+  if (error || !data || !data.length) throw error || new Error("sin datos");
+  s.truth[q.id] = { correct: data[0].correct_option_id, explanation: data[0].explanation };
+  return s.truth[q.id];
+}
+
+async function studyAnswer(btn) {
+  const s = state.study; const q = s.pending[0];
+  if (!s.picked || s.busy) return;
+  s.busy = true; btn.disabled = true; setNotice(null);
+  try {
+    const t = await studyTruth(q);
+    s.attempts++;
+    s.result = s.picked === t.correct ? "ok" : "bad";
+    if (s.result === "ok") { if (!s.failed.has(q.id)) s.firstTry.add(q.id); } else s.failed.add(q.id);
+  } catch (e) { setNotice("err", errorText(e)); }
+  s.busy = false; render();
+}
+
+async function studyReveal(btn) {
+  const s = state.study; const q = s.pending[0];
+  btn.disabled = true; setNotice(null);
+  try {
+    await studyTruth(q);
+    s.rev = true;
+    if (!s.result) { s.result = "bad"; s.failed.add(q.id); }
+  } catch (e) { setNotice("err", errorText(e)); }
+  render();
+}
+
+function studyNext() {
+  const s = state.study; const q = s.pending.shift();
+  if (s.result !== "ok") s.pending.push(q);
+  s.picked = null; s.result = null; s.rev = false;
+  s.repeat = s.pending.length ? s.failed.has(s.pending[0].id) : false;
+  setNotice(null); render(); window.scrollTo(0, 0);
+}
+
 function viewEstudio() {
   const s = state.study;
-  const q = s.qs[s.i];
-  const rev = s.revealed[q.id];
-  const picked = s.picked[q.id];
-  const correcta = rev ? q.options.find((o) => o.id === rev.correct) : null;
-
-  let extra = null;
-  if (rev) {
-    const veredicto = picked ? (picked === rev.correct ? "¡Correcto!" : "Incorrecta.") : "";
-    extra = h("div", { class: "explain" },
-      h("b", {}, [veredicto, correcta ? "Respuesta correcta: " + correcta.label + ". " + correcta.text : "Respuesta revelada"].filter(Boolean).join(" ")),
-      h("p", {}, rev.explanation || "Esta pregunta no tiene explicación todavía."),
-      reportBox(q.id)
+  if (!s.pending.length) {
+    const ok = s.firstTry.size;
+    return h("section", { class: "stack" },
+      h("div", { class: "score" },
+        h("div", { class: "big" }, "100%"),
+        h("div", {}, h("h2", { style: "color:#fff" }, "¡Resolviste todas las preguntas!"),
+          h("p", {}, plural(s.total, "pregunta", "preguntas") + " · " + ok + " a la primera · " + plural(s.attempts, "intento", "intentos") + " en total"))),
+      h("div", { class: "row" },
+        h("button", { class: "btn", type: "button", onclick: () => go("estcfg") }, "Estudiar otra vez"),
+        h("button", { class: "btn ghost", type: "button", onclick: () => go("inicio") }, "Volver al inicio"))
     );
   }
+  const q = s.pending[0];
+  const faltan = s.pending.length;
+  const t = s.rev ? s.truth[q.id] : null;
+  const correcta = t ? q.options.find((o) => o.id === t.correct) : null;
 
-  const ultima = s.i === s.qs.length - 1;
+  let extra = null;
+  if (s.result) {
+    const bloques = [h("b", {}, s.result === "ok" ? "¡Correcto!" : (s.picked ? "Incorrecta. Volverá a aparecer." : "Volverá a aparecer."))];
+    if (t) {
+      bloques.push(h("p", {}, "Respuesta correcta: " + (correcta ? correcta.label + ". " + correcta.text : "—")));
+      bloques.push(h("p", {}, t.explanation || "Esta pregunta no tiene explicación todavía."));
+      bloques.push(reportBox(q.id));
+    }
+    extra = h("div", { class: "explain" + (s.result === "bad" ? " bad" : "") }, ...bloques);
+  }
+
   return h("section", { class: "stack" },
     h("div", { class: "row", style: "justify-content:space-between" },
       h("h1", { style: "font-size:clamp(20px,4vw,26px)" }, s.exam.title + " · Estudio"),
-      h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "Salir")
+      h("div", { class: "row" },
+        h("span", { class: "tag" }, "Por resolver: " + faltan + " de " + s.total),
+        h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "Salir"))
     ),
-    questionBlock(q, s.i, s.qs.length, {
-      picked, revealed: rev, extra,
-      onPick: (id) => { s.picked[q.id] = id; render(); }
+    questionBlock(q, 0, s.total, {
+      picked: s.picked, revealed: s.rev ? t && { correct: t.correct } : null, verdict: s.result, extra,
+      pct: Math.round(((s.total - faltan) / s.total) * 100),
+      meta: s.repeat ? "Repetida" : "Nueva",
+      onPick: (id) => { s.picked = id; render(); }
     }),
     h("div", { class: "row nav" },
-      h("button", { class: "btn ghost", type: "button", disabled: s.i === 0, onclick: () => { s.i--; setNotice(null); render(); window.scrollTo(0, 0); } }, "Anterior"),
-      h("div", { class: "mid" },
-        rev ? null : h("button", { class: "btn", type: "button", onclick: (ev) => revealAnswer(ev.currentTarget) }, "Ver respuesta")
-      ),
-      ultima
-        ? h("button", { class: "btn ghost", type: "button", onclick: () => go("inicio") }, "Terminar")
-        : h("button", { class: "btn", type: "button", onclick: () => { s.i++; setNotice(null); render(); window.scrollTo(0, 0); } }, "Siguiente")
+      s.result
+        ? h("div", { class: "mid" }, s.rev ? null : h("button", { class: "btn ghost", type: "button", onclick: (ev) => studyReveal(ev.currentTarget) }, "Ver respuesta"))
+        : h("div", { class: "mid" },
+            h("button", { class: "btn", type: "button", disabled: !s.picked || s.busy, onclick: (ev) => studyAnswer(ev.currentTarget) }, "Responder"),
+            h("button", { class: "btn ghost", type: "button", onclick: (ev) => studyReveal(ev.currentTarget) }, "Ver respuesta")),
+      s.result
+        ? h("button", { class: "btn", type: "button", onclick: studyNext }, s.result === "ok" && faltan === 1 ? "Finalizar" : "Siguiente")
+        : null
     )
   );
-}
-
-async function revealAnswer(btn) {
-  const s = state.study;
-  const q = s.qs[s.i];
-  btn.disabled = true;
-  setNotice(null);
-  const { data, error } = await sb.rpc("reveal_answer", { p_question_id: q.id });
-  if (error || !data || !data.length) {
-    setNotice("err", error ? errorText(error) : "No se pudo obtener la respuesta.");
-    render();
-    return;
-  }
-  s.revealed[q.id] = { correct: data[0].correct_option_id, explanation: data[0].explanation };
-  render();
 }
 
 /* Examen simulado: configuración */

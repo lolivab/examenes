@@ -142,3 +142,4 @@ input.chk{width:18px;height:18px;padding:0;accent-color:var(--ink)}
 .authcard form .btn{background:var(--ink);color:var(--bg)}
 .authcard form .btn:hover{background:var(--ink)}
 @media(max-width:820px){.landing{grid-template-columns:minmax(0,1fr);padding:20px;gap:22px}.landing .kpis{display:none}.landing .pitch p{margin:10px 0 0}}
+.explain.bad{border-left-color:var(--bad)}
