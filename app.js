@@ -1,13 +1,29 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
+/* "Mantener sesión iniciada": la sesión va a localStorage (persistente) o a sessionStorage (se borra al cerrar). */
+const REMEMBER_KEY = "kb_remember";
+const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
+const remember = () => safe(() => localStorage.getItem(REMEMBER_KEY) !== "0", true);
+const setRemember = (v) => safe(() => localStorage.setItem(REMEMBER_KEY, v ? "1" : "0"));
+const authStorage = {
+  getItem: (k) => safe(() => localStorage.getItem(k) ?? sessionStorage.getItem(k), null),
+  setItem: (k, v) => safe(() => {
+    const [on, off] = remember() ? [localStorage, sessionStorage] : [sessionStorage, localStorage];
+    on.setItem(k, v); off.removeItem(k);
+  }),
+  removeItem: (k) => safe(() => { localStorage.removeItem(k); sessionStorage.removeItem(k); })
+};
+
 const sb = createClient(
   "https://avrblfgwhofyzaceozew.supabase.co",
-  "sb_publishable_x0nCCmOIH81eaQn5WrbZLg_sx0itqFb"
+  "sb_publishable_x0nCCmOIH81eaQn5WrbZLg_sx0itqFb",
+  { auth: { storage: authStorage } }
 );
 
 const app = document.getElementById("app");
 
 const state = {
+  recovery: /type=recovery/.test(location.hash),
   session: null,
   name: "",
   view: "cargando",
@@ -152,6 +168,8 @@ let loadSeq = 0;
 async function loadAccount(session) {
   const mine = ++loadSeq;
   state.session = session;
+  if (state.recovery && session) { go("recuperar"); return; }
+  if (state.recovery && !session) state.recovery = false;
   if (!session) {
     state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null; state.isAdmin = false; state.reports = null;
     go("visitante");
@@ -196,11 +214,11 @@ function render() {
     app.append(h("p", { class: "muted" }, "Cargando…"));
     return;
   }
-  if (state.session && state.view !== "visitante") app.append(topbar());
+  if (state.session && state.view !== "visitante" && state.view !== "recuperar") app.append(topbar());
   if (state.notice) app.append(h("div", { class: "msg " + state.notice.type, role: "status" }, state.notice.text));
   const vistas = {
     visitante: viewVisitante, planes: viewPlanes, inicio: viewInicio,
-    reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
+    recuperar: viewRecuperar, reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
   };
   app.append((vistas[state.view] || viewVisitante)());
 }
@@ -231,18 +249,31 @@ function viewVisitante() {
   const msg = h("div", { class: "msg inline", role: "status", hidden: true });
   const tabLogin = h("button", { type: "button", role: "tab", "aria-selected": "true" }, "Ingresar");
   const tabSignup = h("button", { type: "button", role: "tab", "aria-selected": "false" }, "Crear cuenta");
+  const recordar = h("input", { id: "recordar", type: "checkbox", class: "chk" });
+  recordar.checked = remember();
+  const filaRecordar = h("div", { class: "field row-between" },
+    h("label", { for: "recordar", class: "chk-label" }, recordar, "Mantener sesión iniciada"),
+    h("button", { type: "button", class: "link", onclick: () => setModo("reset") }, "Olvidé mi contraseña")
+  );
+  const campoClave = h("div", { class: "field" }, h("label", { for: "clave" }, "Contraseña"), clave, hintClave);
+  const volver = h("button", { type: "button", class: "link", hidden: true, onclick: () => setModo("login") }, "← Volver a ingresar");
 
   const mostrar = (tipo, texto) => { msg.className = "msg inline " + tipo; msg.textContent = texto; msg.hidden = false; };
 
   function setModo(nuevo) {
     modo = nuevo;
     const alta = modo === "signup";
-    tabLogin.setAttribute("aria-selected", String(!alta));
+    const reset = modo === "reset";
+    tabLogin.setAttribute("aria-selected", String(modo === "login"));
     tabSignup.setAttribute("aria-selected", String(alta));
     campoNombre.hidden = !alta;
     hintClave.hidden = !alta;
+    campoClave.hidden = reset;
+    filaRecordar.hidden = modo !== "login";
+    volver.hidden = !reset;
+    clave.required = !reset;
     clave.autocomplete = alta ? "new-password" : "current-password";
-    enviar.textContent = alta ? "Crear cuenta" : "Ingresar";
+    enviar.textContent = alta ? "Crear cuenta" : reset ? "Enviar enlace" : "Ingresar";
     msg.hidden = true;
   }
   tabLogin.addEventListener("click", () => setModo("login"));
@@ -251,8 +282,9 @@ function viewVisitante() {
   const form = h("form", { novalidate: true },
     campoNombre,
     h("div", { class: "field" }, h("label", { for: "correo" }, "Correo"), correo),
-    h("div", { class: "field" }, h("label", { for: "clave" }, "Contraseña"), clave, hintClave),
-    enviar, msg
+    campoClave,
+    filaRecordar,
+    enviar, volver, msg
   );
 
   form.addEventListener("submit", async (e) => {
@@ -260,6 +292,20 @@ function viewVisitante() {
     msg.hidden = true;
     const email = correo.value.trim();
     const password = clave.value;
+    if (modo === "reset") {
+      if (!email) { mostrar("err", "Escribe tu correo."); return; }
+      enviar.disabled = true;
+      try {
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+        if (error) throw error;
+        mostrar("ok", "Si el correo tiene una cuenta, te enviamos un enlace para crear una nueva contraseña. Revisa también el spam.");
+      } catch (err) {
+        mostrar("err", errorText(err));
+      } finally {
+        enviar.disabled = false;
+      }
+      return;
+    }
     if (!email || !password) { mostrar("err", "Completa correo y contraseña."); return; }
     if (modo === "signup" && password.length < 8) { mostrar("err", "La contraseña debe tener al menos 8 caracteres."); return; }
     enviar.disabled = true;
@@ -271,6 +317,7 @@ function viewVisitante() {
         if (error) throw error;
         if (!data.session) mostrar("ok", "Cuenta creada. Revisa tu correo para confirmarla.");
       } else {
+        setRemember(recordar.checked);
         const { error } = await sb.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
@@ -306,6 +353,34 @@ function viewVisitante() {
       form
     )
   );
+}
+
+/* Nueva contraseña (tras el enlace del correo) */
+function viewRecuperar() {
+  const nueva = h("input", { id: "nueva", type: "password", autocomplete: "new-password", minlength: "8", required: true });
+  const repite = h("input", { id: "repite", type: "password", autocomplete: "new-password", minlength: "8", required: true });
+  const msg = h("div", { class: "msg inline", role: "status", hidden: true });
+  const enviar = h("button", { class: "btn block", type: "submit" }, "Guardar contraseña");
+  const form = h("form", { novalidate: true },
+    h("div", { class: "field" }, h("label", { for: "nueva" }, "Nueva contraseña"), nueva, h("p", { class: "hint" }, "Mínimo 8 caracteres.")),
+    h("div", { class: "field" }, h("label", { for: "repite" }, "Repite la contraseña"), repite),
+    enviar, msg);
+  const mostrar = (t, x) => { msg.className = "msg inline " + t; msg.textContent = x; msg.hidden = false; };
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (nueva.value.length < 8) { mostrar("err", "La contraseña debe tener al menos 8 caracteres."); return; }
+    if (nueva.value !== repite.value) { mostrar("err", "Las contraseñas no coinciden."); return; }
+    enviar.disabled = true;
+    const { error } = await sb.auth.updateUser({ password: nueva.value });
+    if (error) { enviar.disabled = false; mostrar("err", errorText(error)); return; }
+    state.recovery = false;
+    safe(() => history.replaceState(null, "", location.pathname));
+    const { data: { session } } = await sb.auth.getSession();
+    await loadAccount(session);
+    if (session) setNotice("ok", "Contraseña actualizada."), render();
+  });
+  return h("section", { class: "card", style: "max-width:460px;margin:24px auto 0" },
+    h("h2", { style: "margin-bottom:10px" }, "Crea una nueva contraseña"), form);
 }
 
 /* Planes */
@@ -824,10 +899,17 @@ function viewResultado() {
 /* ---------- arranque ---------- */
 
 sb.auth.onAuthStateChange((evento, session) => {
-  if (evento === "TOKEN_REFRESHED" || evento === "USER_UPDATED" || evento === "PASSWORD_RECOVERY") {
+  if (evento === "PASSWORD_RECOVERY") {
+    state.recovery = true;
+    if (session) state.session = session;
+    setTimeout(() => go("recuperar"), 0);
+    return;
+  }
+  if (evento === "TOKEN_REFRESHED" || evento === "USER_UPDATED") {
     if (session) state.session = session;
     return;
   }
+  if (state.recovery) return;
   const mismoUsuario = session && state.session && state.session.user.id === session.user.id;
   if (mismoUsuario) { state.session = session; return; }
   // Se evita llamar a Supabase dentro del callback para no bloquear el cliente.
