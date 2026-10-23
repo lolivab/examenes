@@ -868,6 +868,13 @@ function viewSim() {
       picked: s.answers[q.id], revealed: null,
       onPick: (id) => { s.answers[q.id] = id; s.confirm = false; render(); }
     }),
+    s.salir
+      ? h("div", { class: "msg warn", role: "alert" },
+          h("p", {}, "¿Salir del examen? Tu intento no se calificará y perderás tu avance."),
+          h("div", { class: "row", style: "margin-top:10px" },
+            h("button", { class: "btn small", type: "button", onclick: () => { state.sim = null; go("inicio"); } }, "Sí, salir"),
+            h("button", { class: "btn ghost small", type: "button", onclick: () => { s.salir = false; render(); } }, "Seguir en el examen")))
+      : null,
     s.confirm
       ? h("div", { class: "msg warn", role: "status" },
           "Tienes " + plural(sinResponder, "pregunta sin responder", "preguntas sin responder") + ". Pulsa Finalizar de nuevo para terminar igual.")
@@ -877,7 +884,9 @@ function viewSim() {
       ultima
         ? h("button", { class: "btn", type: "button", onclick: (ev) => simFinish(ev.currentTarget) }, "Finalizar")
         : h("button", { class: "btn", type: "button", onclick: (ev) => simMove(1, ev.currentTarget) }, "Siguiente")
-    )
+    ),
+    h("div", { class: "row" },
+      h("button", { class: "btn ghost small", type: "button", onclick: () => { s.salir = true; render(); window.scrollTo(0, 0); } }, "Salir del examen"))
   );
 }
 
