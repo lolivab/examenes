@@ -479,6 +479,15 @@ function plansSection(enCuenta) {
     const esAmpliacion = !activo && tieneBase && !!plan.upgrade_from_plan_id;
     const precio = esAmpliacion ? fmtPrice(plan.upgrade_price_amount, plan.currency) : fmtPrice(plan.price_amount, plan.currency);
 
+    let ahorro = null;
+    const base = state.plans.find((x) => x.id === plan.upgrade_from_plan_id) || state.plans.find((x) => x.slug === "piloto-privado");
+    if (!activo && !tieneBase && plan.upgrade_from_plan_id && base && base.price_amount != null && plan.upgrade_price_amount != null && plan.price_amount != null) {
+      const separado = Number(base.price_amount) + Number(plan.upgrade_price_amount);
+      const dif = separado - Number(plan.price_amount);
+      if (dif > 0) ahorro = h("p", { class: "saving" },
+        "Mejor opción: comprar " + base.name + " y ampliar después costaría " + fmtPrice(separado, plan.currency) + ". Con este paquete ahorras " + fmtPrice(dif, plan.currency) + ".");
+    }
+
     let boton;
     if (activo) boton = h("button", { class: "btn block", type: "button", disabled: true }, "Plan activo");
     else boton = h("button", { class: "btn block", type: "button", disabled: plan.price_amount == null, onclick: (ev) => choosePlan(plan.slug, ev.currentTarget) },
@@ -490,6 +499,7 @@ function plansSection(enCuenta) {
       h("h3", {}, plan.name),
       h("p", { class: "muted grow" }, plan.description || ""),
       h("div", { class: "price" }, precio),
+      ahorro,
       boton
     ));
   }
