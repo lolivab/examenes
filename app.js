@@ -116,32 +116,10 @@ async function refreshEnts() {
 }
 
 async function loadExams() {
-  const { data, error } = await sb.from("exams").select("id,slug,title,description").order("title");
-  if (error) { state.exams = []; return false; }
-  const counts = await Promise.all(
-    (data || []).map((e) => sb.from("questions").select("id", { count: "exact", head: true }).eq("exam_id", e.id))
-  );
-  const temas = await Promise.all((data || []).map((e) => loadTopics(e.id)));
-  state.exams = (data || []).map((e, i) => ({ ...e, total: counts[i].count ?? 0, topics: temas[i] }));
+  const { data, error } = await sb.rpc("exam_catalog");
+  if (error || !Array.isArray(data)) { state.exams = []; return false; }
+  state.exams = data.map((e) => ({ ...e, total: Number(e.total) || 0, topics: e.topics || [] }));
   return true;
-}
-
-/* Asignaturas de un examen, con su cantidad de preguntas (en el orden del banco). */
-async function loadTopics(examId) {
-  const filas = [];
-  for (let desde = 0; ; desde += 1000) {
-    const { data, error } = await sb.from("questions").select("topic,position")
-      .eq("exam_id", examId).order("position").range(desde, desde + 999);
-    if (error || !data) break;
-    filas.push(...data);
-    if (data.length < 1000) break;
-  }
-  const mapa = new Map();
-  for (const f of filas) {
-    if (!f.topic) continue;
-    mapa.set(f.topic, (mapa.get(f.topic) || 0) + 1);
-  }
-  return [...mapa].map(([name, count]) => ({ name, count }));
 }
 
 async function loadQuestions(examId, ids, topics) {
@@ -195,6 +173,7 @@ async function loadAccount(session) {
   const user = session.user;
   state.name = (user.user_metadata && user.user_metadata.display_name) || (user.email || "").split("@")[0];
   try {
+    const catalogo = loadExams();
     const [prof, ents, plans, adm] = await Promise.all([
       sb.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
       sb.from("entitlements").select("status, plans(slug,name)"),
@@ -228,7 +207,7 @@ async function loadAccount(session) {
       if (mine !== loadSeq) return;
     }
     if (hasActive()) {
-      const ok = await loadExams();
+      const ok = await catalogo;
       if (mine !== loadSeq) return;
       go("inicio", ok ? aviso : { type: "err", text: "No se pudieron cargar los exámenes." });
     } else {
