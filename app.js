@@ -328,27 +328,18 @@ function viewVisitante() {
     }
   });
 
-  const irA = (m) => { setModo(m); correo.focus(); };
-
-  return h("div", { class: "stack" },
-    h("section", { class: "hero" },
-      h("div", {},
-        h("div", { class: "eyebrow" }, "Bancos de preguntas"),
-        h("h1", {}, "Estudia y resuelve exámenes a tu medida"),
-        h("p", {}, "Elige cuántas preguntas quieres responder y revisa la explicación de cada respuesta correcta."),
-        h("div", { class: "row" },
-          h("button", { class: "btn", type: "button", onclick: () => irA("signup") }, "Crear cuenta"),
-          h("button", { class: "btn ghost", type: "button", onclick: () => irA("login") }, "Ingresar")
-        )
-      ),
+  return h("section", { class: "hero landing" },
+    h("div", { class: "pitch" },
+      h("div", { class: "eyebrow" }, "Bancos de preguntas"),
+      h("h1", {}, "Estudia y resuelve exámenes a tu medida"),
+      h("p", {}, "Elige cuántas preguntas quieres responder y revisa la explicación de cada respuesta correcta."),
       h("div", { class: "kpis" },
         h("div", { class: "kpi" }, h("b", {}, "Modo estudio"), h("span", {}, "Revela cada respuesta cuando quieras")),
         h("div", { class: "kpi" }, h("b", {}, "Examen simulado"), h("span", {}, "Con corrección y explicaciones al terminar")),
         h("div", { class: "kpi" }, h("b", {}, "Explicaciones"), h("span", {}, "Entiende por qué la respuesta es correcta"))
       )
     ),
-    h("section", { class: "card", style: "max-width:460px" },
-      h("h2", { style: "margin-bottom:10px" }, "Mi cuenta"),
+    h("div", { class: "card authcard" },
       h("div", { class: "tabs", role: "tablist", "aria-label": "Acceso" }, tabLogin, tabSignup),
       form
     )
