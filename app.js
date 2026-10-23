@@ -217,7 +217,7 @@ function render() {
   if (state.session && state.view !== "visitante" && state.view !== "recuperar") app.append(topbar());
   if (state.notice) app.append(h("div", { class: "msg " + state.notice.type, role: "status" }, state.notice.text));
   const vistas = {
-    visitante: viewVisitante, planes: viewPlanes, inicio: viewInicio,
+    visitante: viewVisitante, planes: viewPlanes, cuenta: viewCuenta, inicio: viewInicio,
     recuperar: viewRecuperar, reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
   };
   app.append((vistas[state.view] || viewVisitante)());
@@ -228,8 +228,9 @@ function topbar() {
   return h("header", { class: "topbar" },
     h("div", { class: "brand" }, "Knowledge Base"),
     h("div", { class: "user" },
-      h("div", { class: "avatar", "aria-hidden": "true" }, inicial),
-      h("span", { class: "uname" }, state.name),
+      h("button", { class: "userlink" + (state.view === "cuenta" ? " on" : ""), type: "button", "aria-label": "Mi cuenta", title: "Mi cuenta", onclick: () => go("cuenta") },
+        h("span", { class: "avatar", "aria-hidden": "true" }, inicial),
+        h("span", { class: "uname" }, state.name)),
       state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openReportes() }, "Reportes") : null,
       h("button", { class: "btn ghost small", type: "button", onclick: () => sb.auth.signOut() }, "Cerrar sesión")
     )
@@ -374,8 +375,56 @@ function viewRecuperar() {
     h("h2", { style: "margin-bottom:10px" }, "Crea una nueva contraseña"), form);
 }
 
+/* Mi cuenta */
+function viewCuenta() {
+  const email = state.session && state.session.user ? state.session.user.email : "";
+  const actual = h("input", { id: "pw0", type: "password", autocomplete: "current-password", required: true });
+  const nueva = h("input", { id: "pw1", type: "password", autocomplete: "new-password", minlength: "8", required: true });
+  const repite = h("input", { id: "pw2", type: "password", autocomplete: "new-password", minlength: "8", required: true });
+  const msg = h("div", { class: "msg inline", role: "status", hidden: true });
+  const enviar = h("button", { class: "btn", type: "submit" }, "Cambiar contraseña");
+  const mostrar = (t, x) => { msg.className = "msg inline " + t; msg.textContent = x; msg.hidden = false; };
+  const form = h("form", { novalidate: true },
+    h("div", { class: "field" }, h("label", { for: "pw0" }, "Contraseña actual"), actual),
+    h("div", { class: "field" }, h("label", { for: "pw1" }, "Nueva contraseña"), nueva, h("p", { class: "hint" }, "Mínimo 8 caracteres.")),
+    h("div", { class: "field" }, h("label", { for: "pw2" }, "Repite la nueva contraseña"), repite),
+    enviar, msg);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    msg.hidden = true;
+    if (!actual.value) { mostrar("err", "Escribe tu contraseña actual."); return; }
+    if (nueva.value.length < 8) { mostrar("err", "La nueva contraseña debe tener al menos 8 caracteres."); return; }
+    if (nueva.value !== repite.value) { mostrar("err", "Las contraseñas nuevas no coinciden."); return; }
+    if (nueva.value === actual.value) { mostrar("err", "La nueva contraseña debe ser distinta de la actual."); return; }
+    enviar.disabled = true;
+    try {
+      const { error: e1 } = await sb.auth.signInWithPassword({ email, password: actual.value });
+      if (e1) { mostrar("err", "La contraseña actual no es correcta."); return; }
+      const { error: e2 } = await sb.auth.updateUser({ password: nueva.value });
+      if (e2) throw e2;
+      form.reset();
+      mostrar("ok", "Contraseña actualizada.");
+    } catch (err) {
+      mostrar("err", errorText(err));
+    } finally {
+      enviar.disabled = false;
+    }
+  });
+  return h("section", { class: "stack" },
+    h("div", {}, h("button", { class: "btn ghost small", type: "button", onclick: () => go(hasActive() ? "inicio" : "planes") }, "← Volver")),
+    h("h1", {}, "Mi cuenta"),
+    h("div", { class: "card" },
+      h("p", { style: "font-weight:600" }, state.name),
+      h("p", { class: "muted" }, email)),
+    plansSection(true),
+    h("div", { class: "card", style: "max-width:460px" }, h("h2", { style: "margin-bottom:12px" }, "Cambiar contraseña"), form)
+  );
+}
+
 /* Planes */
-function viewPlanes() {
+function viewPlanes() { return plansSection(false); }
+
+function plansSection(enCuenta) {
   const pend = pendingEnt();
   const activos = activeSlugs();
   const tieneBase = activos.has("piloto-privado");
@@ -384,12 +433,11 @@ function viewPlanes() {
 
   sec.append(
     h("div", {},
-      h("h1", {}, amplia ? "Ampliar mi cuenta" : "Elige tu plan"),
+      enCuenta ? h("h2", {}, amplia ? "Mis planes y ampliación" : "Planes") : h("h1", {}, "Elige tu plan"),
       h("p", { class: "muted", style: "margin-top:6px" },
         amplia ? "Suma más exámenes a tu cuenta." : "Para empezar, elige el plan que quieres comprar.")
     )
   );
-  if (amplia) sec.append(h("div", {}, h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Volver")));
 
   if (pend) {
     sec.append(h("div", { class: "msg warn", role: "status" },
@@ -461,13 +509,6 @@ function viewInicio() {
     sec.append(grid);
   }
 
-  if (!activos.has("paquete-completo")) {
-    sec.append(h("div", { class: "card item" },
-      h("h3", {}, "Amplía tu cuenta"),
-      h("p", { class: "muted" }, "Con el Paquete Completo accedes también a los demás exámenes disponibles."),
-      h("div", {}, h("button", { class: "btn ghost", type: "button", onclick: () => go("planes") }, "Ver planes"))
-    ));
-  }
   return sec;
 }
 
