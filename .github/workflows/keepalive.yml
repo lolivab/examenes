@@ -11,4 +11,4 @@ jobs:
         run: |
           curl -fsS --retry 3 \
             -H "apikey: sb_publishable_x0nCCmOIH81eaQn5WrbZLg_sx0itqFb" \
-            "https://avrblfgwhofyzaceozew.supabase.co/rest/v1/exams?select=id&limit=1"
+            "https://avrblfgwhofyzaceozew.supabase.co/rest/v1/plans?select=slug&limit=1"
