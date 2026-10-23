@@ -48,6 +48,7 @@ const KNOWN_ERRORS = new Set([
   "El banco no tiene preguntas",
   "Cantidad inválida",
   "Asignaturas no válidas",
+  "No autorizado",
   "Plan no disponible",
   "Ya tienes este plan",
   "Debes iniciar sesión"
@@ -152,7 +153,7 @@ async function loadAccount(session) {
   const mine = ++loadSeq;
   state.session = session;
   if (!session) {
-    state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null;
+    state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null; state.isAdmin = false; state.reports = null;
     go("visitante");
     return;
   }
@@ -161,17 +162,19 @@ async function loadAccount(session) {
   const user = session.user;
   state.name = (user.user_metadata && user.user_metadata.display_name) || (user.email || "").split("@")[0];
   try {
-    const [prof, ents, plans] = await Promise.all([
+    const [prof, ents, plans, adm] = await Promise.all([
       sb.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
       sb.from("entitlements").select("status, plans(slug,name)"),
       sb.from("plans")
         .select("slug,name,description,price_amount,currency,upgrade_from_plan_id,upgrade_price_amount,sort_order")
-        .order("sort_order")
+        .order("sort_order"),
+      sb.rpc("is_admin")
     ]);
     if (mine !== loadSeq) return;
     if (prof.data && prof.data.display_name) state.name = prof.data.display_name;
     state.ents = (ents.data || []).filter((e) => e.plans);
     state.plans = plans.data || [];
+    state.isAdmin = adm.data === true;
     if (hasActive()) {
       const ok = await loadExams();
       if (mine !== loadSeq) return;
@@ -197,7 +200,7 @@ function render() {
   if (state.notice) app.append(h("div", { class: "msg " + state.notice.type, role: "status" }, state.notice.text));
   const vistas = {
     visitante: viewVisitante, planes: viewPlanes, inicio: viewInicio,
-    estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
+    reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
   };
   app.append((vistas[state.view] || viewVisitante)());
 }
@@ -209,6 +212,7 @@ function topbar() {
     h("div", { class: "user" },
       h("div", { class: "avatar", "aria-hidden": "true" }, inicial),
       h("span", { class: "uname" }, state.name),
+      state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openReportes() }, "Reportes") : null,
       h("button", { class: "btn ghost small", type: "button", onclick: () => sb.auth.signOut() }, "Cerrar sesión")
     )
   );
@@ -503,7 +507,8 @@ function viewEstudio() {
     const veredicto = picked ? (picked === rev.correct ? "¡Correcto!" : "Incorrecta.") : "";
     extra = h("div", { class: "explain" },
       h("b", {}, [veredicto, correcta ? "Respuesta correcta: " + correcta.label + ". " + correcta.text : "Respuesta revelada"].filter(Boolean).join(" ")),
-      h("p", {}, rev.explanation || "Esta pregunta no tiene explicación todavía.")
+      h("p", {}, rev.explanation || "Esta pregunta no tiene explicación todavía."),
+      reportBox(q.id)
     );
   }
 
@@ -686,6 +691,98 @@ async function simFinish(btn) {
   }
 }
 
+
+/* Reportar error en la respuesta correcta */
+const reported = new Set();
+const reporting = new Set();
+
+function reportBox(questionId) {
+  const caja = h("div", { class: "report" });
+  const pintar = () => {
+    caja.replaceChildren();
+    if (reported.has(questionId)) {
+      caja.append(h("span", { class: "report-ok" }, "Gracias, revisaremos esta respuesta."));
+      return;
+    }
+    if (!reporting.has(questionId)) {
+      caja.append(h("button", { type: "button", class: "report-link", onclick: () => { reporting.add(questionId); pintar(); } },
+        "Reportar error en respuesta correcta"));
+      return;
+    }
+    const nota = h("textarea", { rows: "2", maxlength: "500", placeholder: "¿Qué crees que está mal? (opcional)", "aria-label": "Comentario del reporte" });
+    const msg = h("span", { class: "report-err", hidden: true });
+    const enviar = h("button", { type: "button", class: "btn small", onclick: async () => {
+      enviar.disabled = true; msg.hidden = true;
+      const { error } = await sb.rpc("report_answer_error", { p_question_id: questionId, p_note: nota.value });
+      if (error) { enviar.disabled = false; msg.textContent = errorText(error); msg.hidden = false; return; }
+      reported.add(questionId); reporting.delete(questionId); pintar();
+    } }, "Enviar reporte");
+    const cancelar = h("button", { type: "button", class: "btn ghost small", onclick: () => { reporting.delete(questionId); pintar(); } }, "Cancelar");
+    caja.append(nota, h("div", { class: "row" }, enviar, cancelar, msg));
+  };
+  pintar();
+  return caja;
+}
+
+/* Administración: listado de reportes */
+async function openReportes(status) {
+  state.reports = { status: status || "abierto", items: null, error: null };
+  go("reportes");
+  const st = state.reports;
+  const { data, error } = await sb.rpc("admin_list_reports", { p_status: st.status });
+  if (state.reports !== st) return;
+  if (error) st.error = errorText(error); else st.items = data || [];
+  render();
+}
+
+async function resolveReports(item, status, verify) {
+  const { error } = await sb.rpc("admin_resolve_reports", { p_question_id: item.question_id, p_status: status, p_verify: verify });
+  if (error) { setNotice("err", errorText(error)); render(); return; }
+  setNotice(null);
+  openReportes(state.reports.status);
+}
+
+function viewReportes() {
+  const st = state.reports || { status: "abierto", items: null };
+  const seg = h("div", { class: "seg", role: "group", "aria-label": "Estado" });
+  for (const [v, l] of [["abierto", "Abiertos"], ["resuelto", "Resueltos"], ["descartado", "Descartados"]]) {
+    seg.append(h("button", { type: "button", "aria-pressed": String(st.status === v), onclick: () => openReportes(v) }, l));
+  }
+  const lista = h("div", { class: "review" });
+  if (st.error) lista.append(h("div", { class: "msg err" }, st.error));
+  else if (!st.items) lista.append(h("p", { class: "muted" }, "Cargando…"));
+  else if (!st.items.length) lista.append(h("div", { class: "card empty" }, h("p", { class: "muted" }, "No hay reportes en este estado.")));
+  else for (const it of st.items) {
+    const ops = h("div", { class: "opts" });
+    for (const o of it.options || []) {
+      ops.append(h("div", { class: "opt" + (o.is_correct ? " correct" : ""), style: "cursor:default" },
+        h("span", { class: "lt" }, o.label), h("span", {}, o.text)));
+    }
+    const notas = (it.reports || []).filter((r) => r.note).map((r) => h("li", {}, r.note));
+    lista.append(h("article", { class: "card stack" },
+      h("div", { class: "row" },
+        h("span", { class: "tag" }, (it.topic || "") + " · N.º " + (it.position ?? "")),
+        h("span", { class: "tag bad" }, plural(it.count, "reporte", "reportes")),
+        h("span", { class: "tag" }, "Estado: " + it.answer_status + (it.confidence ? " (" + it.confidence + ")" : ""))),
+      h("h2", { class: "qtext" }, it.statement),
+      ops,
+      h("div", { class: "explain" }, h("b", {}, "Explicación actual"), h("p", {}, it.explanation || "—")),
+      it.review_note ? h("p", { class: "hint" }, "Nota interna: " + it.review_note) : null,
+      notas.length ? h("div", {}, h("b", {}, "Comentarios de alumnos"), h("ul", {}, notas)) : null,
+      st.status === "abierto" ? h("div", { class: "row" },
+        h("button", { class: "btn small", type: "button", onclick: () => resolveReports(it, "resuelto", true) }, "Resuelto y verificada"),
+        h("button", { class: "btn ghost small", type: "button", onclick: () => resolveReports(it, "resuelto", false) }, "Resuelto"),
+        h("button", { class: "btn ghost small", type: "button", onclick: () => resolveReports(it, "descartado", false) }, "Descartar")
+      ) : null
+    ));
+  }
+  return h("section", { class: "stack" },
+    h("div", { class: "row", style: "justify-content:space-between" },
+      h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Reportes de respuestas"),
+      h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Inicio")),
+    seg, lista);
+}
+
 /* Resultado */
 function viewResultado() {
   const s = state.sim;
@@ -706,7 +803,8 @@ function viewResultado() {
       h("p", { class: "answer" }, h("b", {}, "Correcta: "), correcta ? correcta.label + ". " + correcta.text : "—"),
       h("div", { class: "explain" },
         h("b", {}, "Explicación"),
-        h("p", {}, r.explanation || "Esta pregunta no tiene explicación todavía."))
+        h("p", {}, r.explanation || "Esta pregunta no tiene explicación todavía."),
+        reportBox(q.id))
     ));
   }
 
