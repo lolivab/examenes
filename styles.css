@@ -218,3 +218,12 @@ label{color:var(--mute);font-weight:600}
 .avatar.online{box-shadow:0 0 0 3px var(--panel),0 0 0 6px #16A34A}
 @media(max-width:820px){.landing{padding:22px;gap:22px}.landing .logo{max-width:340px;margin:0 auto 4px}.landing .checks{display:none}}
 @media(max-width:480px){.brand span{display:none}.landing{padding:16px;border-radius:22px}.landing h1{font-size:24px}}
+@media(max-width:820px){
+  .landing .pitch h1,.landing .pitch p{display:none}
+  .landing .logo{max-width:230px;margin:0 auto}
+  .landing{padding:14px;gap:6px}
+  .authcard{padding:16px}
+  .authcard .field{margin-bottom:8px}
+  .authcard input{min-height:44px}
+  .authcard .tabs{margin-bottom:10px}
+}
