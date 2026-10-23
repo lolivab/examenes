@@ -237,6 +237,8 @@ function render() {
 function topbar() {
   const inicial = (state.name || "?").trim().charAt(0).toUpperCase();
   return h("header", { class: "topbar" },
+    h("button", { class: "brand", type: "button", "aria-label": "PilotPrep, ir al inicio", onclick: () => go(hasActive() ? "inicio" : "planes") },
+      h("img", { src: "img/icon.png", alt: "", width: "36", height: "36" }), h("span", {}, "PilotPrep")),
     h("div", { class: "user" },
       h("button", { class: "userlink" + (state.view === "cuenta" ? " on" : ""), type: "button", "aria-label": "Mi cuenta", title: "Mi cuenta", onclick: () => go("cuenta") },
         h("span", { class: "avatar", "aria-hidden": "true" }, inicial),
@@ -341,13 +343,13 @@ function viewVisitante() {
 
   return h("section", { class: "hero landing" },
     h("div", { class: "pitch" },
-      h("div", { class: "eyebrow" }, "Bancos de preguntas"),
-      h("h1", {}, "Estudia y resuelve exámenes a tu medida"),
-      h("p", {}, "Elige cuántas preguntas quieres responder y revisa la explicación de cada respuesta correcta."),
-      h("div", { class: "kpis" },
-        h("div", { class: "kpi" }, h("b", {}, "Modo estudio"), h("span", {}, "Revela cada respuesta cuando quieras")),
-        h("div", { class: "kpi" }, h("b", {}, "Examen simulado"), h("span", {}, "Con corrección y explicaciones al terminar")),
-        h("div", { class: "kpi" }, h("b", {}, "Explicaciones"), h("span", {}, "Entiende por qué la respuesta es correcta"))
+      h("img", { class: "logo", src: "img/logo.webp", alt: "PilotPrep · Aprender, practicar, aprobar", width: "760", height: "509" }),
+      h("h1", {}, "Estudia hasta dominar cada pregunta"),
+      h("p", {}, "Elige las asignaturas y la cantidad de preguntas. Las que falles vuelven a aparecer hasta que las resuelvas todas, y cada respuesta tiene su explicación."),
+      h("ul", { class: "checks" },
+        h("li", {}, "Modo estudio que repite lo fallado"),
+        h("li", {}, "Examen simulado con corrección al terminar"),
+        h("li", {}, "Explicación de cada respuesta correcta")
       )
     ),
     h("div", { class: "card authcard" },
