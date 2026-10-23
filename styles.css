@@ -153,3 +153,4 @@ input.chk{width:18px;height:18px;padding:0;accent-color:var(--ink)}
 .ustats{text-align:right;display:flex;flex-direction:column;flex:none}
 .ustats b{font:700 22px "Bricolage Grotesque",system-ui,sans-serif}
 .ustats .muted{font-size:12.5px}
+.topbar{justify-content:flex-end}

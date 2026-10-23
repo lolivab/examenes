@@ -237,7 +237,6 @@ function render() {
 function topbar() {
   const inicial = (state.name || "?").trim().charAt(0).toUpperCase();
   return h("header", { class: "topbar" },
-    h("div", { class: "brand" }, "Knowledge Base"),
     h("div", { class: "user" },
       h("button", { class: "userlink" + (state.view === "cuenta" ? " on" : ""), type: "button", "aria-label": "Mi cuenta", title: "Mi cuenta", onclick: () => go("cuenta") },
         h("span", { class: "avatar", "aria-hidden": "true" }, inicial),
