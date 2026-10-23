@@ -221,10 +221,16 @@ async function loadAccount(session) {
 
 /* ---------- vistas ---------- */
 
+function loader() {
+  return h("div", { class: "loader", role: "status", "aria-live": "polite" },
+    h("p", { class: "muted" }, "Cargando…"),
+    h("div", { class: "loadbar", "aria-hidden": "true" }, h("i", {})));
+}
+
 function render() {
   app.replaceChildren();
   if (state.view === "cargando") {
-    app.append(h("p", { class: "muted" }, "Cargando…"));
+    app.append(loader());
     return;
   }
   if (state.session && state.view !== "visitante" && state.view !== "recuperar") app.append(topbar());
@@ -986,7 +992,7 @@ function viewUsuarios() {
   const st = state.users || { items: null };
   const lista = h("div", { class: "review" });
   if (st.error) lista.append(h("div", { class: "msg err" }, st.error));
-  else if (!st.items) lista.append(h("p", { class: "muted" }, "Cargando…"));
+  else if (!st.items) lista.append(loader());
   else if (!st.items.length) lista.append(h("div", { class: "card empty" }, h("p", { class: "muted" }, "Aún no hay usuarios.")));
   else for (const u of st.items) {
     const la = lastAccess(u);
@@ -1041,7 +1047,7 @@ function viewReportes() {
   }
   const lista = h("div", { class: "review" });
   if (st.error) lista.append(h("div", { class: "msg err" }, st.error));
-  else if (!st.items) lista.append(h("p", { class: "muted" }, "Cargando…"));
+  else if (!st.items) lista.append(loader());
   else if (!st.items.length) lista.append(h("div", { class: "card empty" }, h("p", { class: "muted" }, "No hay reportes en este estado.")));
   else for (const it of st.items) {
     const ops = h("div", { class: "opts" });
