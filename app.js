@@ -47,6 +47,7 @@ const KNOWN_ERRORS = new Set([
   "La pregunta no pertenece al intento",
   "El banco no tiene preguntas",
   "Cantidad inválida",
+  "Asignaturas no válidas",
   "Plan no disponible",
   "Ya tienes este plan",
   "Debes iniciar sesión"
@@ -103,15 +104,35 @@ async function loadExams() {
   const counts = await Promise.all(
     (data || []).map((e) => sb.from("questions").select("id", { count: "exact", head: true }).eq("exam_id", e.id))
   );
-  state.exams = (data || []).map((e, i) => ({ ...e, total: counts[i].count ?? 0 }));
+  const temas = await Promise.all((data || []).map((e) => loadTopics(e.id)));
+  state.exams = (data || []).map((e, i) => ({ ...e, total: counts[i].count ?? 0, topics: temas[i] }));
   return true;
 }
 
-async function loadQuestions(examId, ids) {
+/* Asignaturas de un examen, con su cantidad de preguntas (en el orden del banco). */
+async function loadTopics(examId) {
+  const filas = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await sb.from("questions").select("topic,position")
+      .eq("exam_id", examId).order("position").range(desde, desde + 999);
+    if (error || !data) break;
+    filas.push(...data);
+    if (data.length < 1000) break;
+  }
+  const mapa = new Map();
+  for (const f of filas) {
+    if (!f.topic) continue;
+    mapa.set(f.topic, (mapa.get(f.topic) || 0) + 1);
+  }
+  return [...mapa].map(([name, count]) => ({ name, count }));
+}
+
+async function loadQuestions(examId, ids, topics) {
   let q = sb.from("questions")
     .select("id,statement,topic,position,created_at,options(id,label,text)")
     .eq("exam_id", examId);
   if (ids) q = q.in("id", ids);
+  if (topics && topics.length) q = q.in("topic", topics);
   q = q.order("position", { nullsFirst: false }).order("created_at");
   const { data, error } = await q;
   if (error) throw error;
@@ -131,7 +152,7 @@ async function loadAccount(session) {
   const mine = ++loadSeq;
   state.session = session;
   if (!session) {
-    state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null;
+    state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null;
     go("visitante");
     return;
   }
@@ -176,7 +197,7 @@ function render() {
   if (state.notice) app.append(h("div", { class: "msg " + state.notice.type, role: "status" }, state.notice.text));
   const vistas = {
     visitante: viewVisitante, planes: viewPlanes, inicio: viewInicio,
-    estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
+    estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
   };
   app.append((vistas[state.view] || viewVisitante)());
 }
@@ -405,11 +426,62 @@ function questionBlock(q, i, total, opts) {
   );
 }
 
+/* Selector de asignaturas (compartido por estudio y simulado) */
+function subjectPicker(exam, sel, onChange) {
+  const todas = sel.size === exam.topics.length;
+  const caja = h("div", { class: "subjects", role: "group", "aria-label": "Asignaturas" });
+  caja.append(h("button", {
+    type: "button", class: "chip", "aria-pressed": String(todas),
+    onclick: () => { exam.topics.forEach((t) => sel.add(t.name)); onChange(); }
+  }, "Todas"));
+  for (const t of exam.topics) {
+    caja.append(h("button", {
+      type: "button", class: "chip", "aria-pressed": String(sel.has(t.name) && !todas),
+      onclick: () => {
+        if (todas) sel.clear();
+        if (sel.has(t.name)) sel.delete(t.name); else sel.add(t.name);
+        if (!sel.size) exam.topics.forEach((x) => sel.add(x.name));
+        onChange();
+      }
+    }, t.name + " · " + t.count));
+  }
+  return caja;
+}
+
+const countOf = (exam, sel) => exam.topics.filter((t) => sel.has(t.name)).reduce((a, t) => a + t.count, 0);
+
 /* Modo estudio */
-async function startStudy(exam, btn) {
+function startStudy(exam, btn) {
+  if (exam.topics && exam.topics.length > 1) {
+    state.studyCfg = { exam, sel: new Set(exam.topics.map((t) => t.name)) };
+    go("estcfg");
+  } else {
+    beginStudy(exam, null, btn);
+  }
+}
+
+function viewEstCfg() {
+  const c = state.studyCfg;
+  const n = countOf(c.exam, c.sel);
+  const todas = c.sel.size === c.exam.topics.length;
+  return h("section", { class: "stack" },
+    h("div", {}, h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Volver")),
+    h("div", { class: "card stack", style: "max-width:640px" },
+      h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Modo estudio"),
+      h("p", { class: "muted" }, c.exam.title),
+      h("div", {}, h("label", {}, "¿De qué asignaturas quieres ver preguntas?"),
+        subjectPicker(c.exam, c.sel, render)),
+      h("p", { class: "hint" }, plural(n, "pregunta", "preguntas") + " seleccionadas. Puedes elegir una o varias asignaturas."),
+      h("button", { class: "btn", type: "button",
+        onclick: (ev) => beginStudy(c.exam, todas ? null : [...c.sel], ev.currentTarget) }, "Comenzar a estudiar")
+    )
+  );
+}
+
+async function beginStudy(exam, topics, btn) {
   btn.disabled = true;
   try {
-    const qs = await loadQuestions(exam.id);
+    const qs = await loadQuestions(exam.id, null, topics);
     if (!qs.length) { btn.disabled = false; setNotice("warn", "Este banco aún no tiene preguntas."); render(); return; }
     state.study = { exam, qs, i: 0, picked: {}, revealed: {} };
     go("estudio");
@@ -474,14 +546,17 @@ async function revealAnswer(btn) {
 
 /* Examen simulado: configuración */
 function openSimCfg(exam) {
-  const total = exam.total;
-  state.simCfg = { exam, count: Math.min(20, total) };
+  const topics = exam.topics || [];
+  state.simCfg = { exam, sel: new Set(topics.map((t) => t.name)), count: Math.min(20, exam.total) };
   go("simcfg");
 }
 
 function viewSimCfg() {
   const c = state.simCfg;
-  const total = c.exam.total;
+  const topics = c.exam.topics || [];
+  const total = topics.length ? countOf(c.exam, c.sel) : c.exam.total;
+  if (c.count > total) c.count = total;
+  if (c.count < 1) c.count = 1;
   const opciones = [10, 20, 50].filter((n) => n < total).map((n) => ({ n, label: String(n) }));
   opciones.push({ n: total, label: total === 1 ? "1 pregunta" : "Todas (" + total + ")" });
 
@@ -492,28 +567,42 @@ function viewSimCfg() {
       onclick: () => { c.count = o.n; render(); }
     }, o.label));
   }
+  const entrada = h("input", {
+    type: "number", min: "1", max: String(total), value: String(c.count), inputmode: "numeric", class: "num",
+    "aria-label": "Cantidad de preguntas",
+    onchange: (ev) => { const v = parseInt(ev.target.value, 10); c.count = Number.isFinite(v) ? Math.max(1, Math.min(total, v)) : c.count; render(); }
+  });
+
+  const k = c.sel.size;
+  const aviso = topics.length > 1 && k > 1
+    ? "Se tomarán preguntas al azar de " + k + " asignaturas, con una cantidad similar de cada una (aprox. " + Math.max(1, Math.floor(c.count / k)) + " por asignatura)."
+    : "Las preguntas se eligen al azar.";
 
   return h("section", { class: "stack" },
     h("div", {}, h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Volver")),
-    h("div", { class: "card stack", style: "max-width:560px" },
+    h("div", { class: "card stack", style: "max-width:640px" },
       h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Examen simulado"),
       h("p", { class: "muted" }, c.exam.title),
-      h("div", {}, h("label", {}, "¿Cuántas preguntas quieres responder?"), seg),
-      h("p", { class: "hint" }, "Las preguntas se eligen al azar. Verás las respuestas correctas y sus explicaciones al terminar."),
+      topics.length > 1 ? h("div", {}, h("label", {}, "Asignaturas (una o más)"), subjectPicker(c.exam, c.sel, render)) : null,
+      h("div", {}, h("label", {}, "¿Cuántas preguntas quieres responder? (máx. " + total + ")"),
+        h("div", { class: "row" }, seg, entrada)),
+      h("p", { class: "hint" }, aviso + " Verás las respuestas correctas y sus explicaciones al terminar."),
       h("button", { class: "btn", type: "button", onclick: (ev) => startSim(ev.currentTarget) }, "Comenzar examen")
     )
   );
 }
 
 async function startSim(btn) {
-  const { exam, count } = state.simCfg;
+  const { exam, count, sel } = state.simCfg;
+  const todas = !exam.topics || !exam.topics.length || sel.size === exam.topics.length;
+  const topics = todas ? null : [...sel];
   btn.disabled = true;
   setNotice(null);
   try {
-    const { data, error } = await sb.rpc("start_attempt", { p_exam_id: exam.id, p_count: count });
+    const { data, error } = await sb.rpc("start_attempt_by_topics", { p_exam_id: exam.id, p_count: count, p_topics: topics });
     if (error) throw error;
     const qs = await loadQuestions(exam.id, data.question_ids);
-    state.sim = { exam, attemptId: data.attempt_id, qs, i: 0, answers: {}, sent: {}, confirm: false, score: null, review: null };
+    state.sim = { exam, attemptId: data.attempt_id, qs, i: 0, answers: {}, sent: {}, confirm: false, score: null, review: null, sel: new Set(sel) };
     go("sim");
   } catch (e) {
     btn.disabled = false;
@@ -628,7 +717,7 @@ function viewResultado() {
     ),
     h("div", { class: "row" },
       h("button", { class: "btn", type: "button", onclick: () => go("inicio") }, "Volver al inicio"),
-      h("button", { class: "btn ghost", type: "button", onclick: () => { state.simCfg = { exam: s.exam, count: total }; go("simcfg"); } }, "Repetir examen")
+      h("button", { class: "btn ghost", type: "button", onclick: () => { state.simCfg = { exam: s.exam, sel: new Set(s.sel), count: total }; go("simcfg"); } }, "Repetir examen")
     ),
     items
   );
