@@ -235,3 +235,8 @@ label{color:var(--mute);font-weight:600}
 .loadbar>i{position:absolute;inset:0 auto 0 0;width:40%;background:var(--accent);border-radius:999px;animation:loadmove 1.2s ease-in-out infinite}
 @keyframes loadmove{0%{left:-40%}100%{left:100%}}
 @media(prefers-reduced-motion:reduce){.loadbar>i{animation:none;width:100%;opacity:.5}}
+
+/* Figuras de apoyo */
+.figs{display:grid;gap:10px;margin:0 0 14px}
+.fig{display:block;border:1px solid var(--line,#d9dce6);border-radius:12px;background:#fff;overflow:hidden}
+.fig img{display:block;width:100%;height:auto}

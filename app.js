@@ -124,7 +124,7 @@ async function loadExams() {
 
 async function loadQuestions(examId, ids, topics) {
   let q = sb.from("questions")
-    .select("id,statement,topic,position,created_at,options(id,label,text)")
+    .select("id,statement,topic,position,created_at,figures,options(id,label,text)")
     .eq("exam_id", examId);
   if (ids) q = q.in("id", ids);
   if (topics && topics.length) q = q.in("topic", topics);
@@ -545,6 +545,15 @@ function viewInicio() {
   return sec;
 }
 
+/* Figuras de apoyo (imágenes del material de la DGAC) */
+function figuresBlock(q) {
+  const lista = Array.isArray(q.figures) ? q.figures : [];
+  if (!lista.length) return null;
+  return h("div", { class: "figs" }, ...lista.map((src, i) =>
+    h("a", { href: src, target: "_blank", rel: "noopener", class: "fig", title: "Abrir figura en grande" },
+      h("img", { src, alt: "Figura de apoyo " + (i + 1) + " de " + lista.length, loading: "lazy" }))));
+}
+
 /* Bloque de pregunta compartido */
 function questionBlock(q, i, total, opts) {
   const rev = opts.revealed;
@@ -567,6 +576,7 @@ function questionBlock(q, i, total, opts) {
       h("i", { style: "width:" + (opts.pct != null ? opts.pct : Math.round(((i + 1) / total) * 100)) + "%" })),
     h("div", { class: "qmeta" }, (opts.meta || "Pregunta " + (i + 1) + " de " + total) + (q.topic ? " · " + q.topic : "")),
     h("h2", { class: "qtext" }, q.statement),
+    figuresBlock(q),
     lista,
     opts.extra || null
   );
@@ -1095,6 +1105,7 @@ function viewResultado() {
     items.append(h("article", { class: "card" },
       h("span", { class: "tag " + estado[0] }, estado[1]),
       h("h2", { class: "qtext", style: "margin-top:8px" }, q.statement),
+      figuresBlock(q),
       h("p", { class: "answer" }, h("b", {}, "Tu respuesta: "), elegida ? elegida.label + ". " + elegida.text : "—"),
       h("p", { class: "answer" }, h("b", {}, "Correcta: "), correcta ? correcta.label + ". " + correcta.text : "—"),
       h("div", { class: "explain" },
