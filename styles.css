@@ -115,3 +115,16 @@ a:focus-visible,.btn:focus-visible,input:focus-visible,button:focus-visible{outl
 .report-link:hover{color:var(--ink)}
 .report-ok{font-size:12px;color:var(--mute)}
 .report-err{font-size:13px;color:#b3261e}
+
+/* Móvil */
+.brand,.topbar .btn{white-space:nowrap}
+@media(max-width:480px){
+  .wrap{padding:14px 14px}
+  .topbar{gap:8px;margin-bottom:14px}
+  .brand{font-size:17px}
+  .user{gap:6px}
+  .avatar{display:none}
+  .topbar .btn.small{padding:4px 9px;min-height:32px}
+  .qtext{font-size:18px}
+  .seg button{padding:8px 11px}
+}
