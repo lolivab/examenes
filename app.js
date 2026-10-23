@@ -164,12 +164,23 @@ async function loadQuestions(examId, ids, topics) {
   return list;
 }
 
+let presenceTimer = null;
+function startPresence(on) {
+  clearInterval(presenceTimer); presenceTimer = null;
+  if (!on) return;
+  const ping = () => { if (document.visibilityState === "visible") sb.rpc("touch_presence").then(() => {}, () => {}); };
+  ping();
+  presenceTimer = setInterval(ping, 60000);
+}
+document.addEventListener("visibilitychange", () => { if (presenceTimer && document.visibilityState === "visible") sb.rpc("touch_presence").then(() => {}, () => {}); });
+
 let loadSeq = 0;
 async function loadAccount(session) {
   const mine = ++loadSeq;
   state.session = session;
   if (state.recovery && session) { go("recuperar"); return; }
   if (state.recovery && !session) state.recovery = false;
+  startPresence(!!session);
   if (!session) {
     state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null; state.isAdmin = false; state.reports = null;
     go("visitante");
@@ -217,7 +228,7 @@ function render() {
   if (state.session && state.view !== "visitante" && state.view !== "recuperar") app.append(topbar());
   if (state.notice) app.append(h("div", { class: "msg " + state.notice.type, role: "status" }, state.notice.text));
   const vistas = {
-    visitante: viewVisitante, planes: viewPlanes, cuenta: viewCuenta, inicio: viewInicio,
+    visitante: viewVisitante, usuarios: viewUsuarios, planes: viewPlanes, cuenta: viewCuenta, inicio: viewInicio,
     recuperar: viewRecuperar, reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
   };
   app.append((vistas[state.view] || viewVisitante)());
@@ -231,7 +242,7 @@ function topbar() {
       h("button", { class: "userlink" + (state.view === "cuenta" ? " on" : ""), type: "button", "aria-label": "Mi cuenta", title: "Mi cuenta", onclick: () => go("cuenta") },
         h("span", { class: "avatar", "aria-hidden": "true" }, inicial),
         h("span", { class: "uname" }, state.name)),
-      state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openReportes() }, "Reportes") : null,
+      state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openUsuarios() }, "Panel") : null,
       h("button", { class: "btn ghost small", type: "button", onclick: () => sb.auth.signOut() }, "Cerrar sesión")
     )
   );
@@ -658,9 +669,10 @@ async function studyAnswer(btn) {
   if (!s.picked || s.busy) return;
   s.busy = true; btn.disabled = true; setNotice(null);
   try {
-    const t = await studyTruth(q);
+    const { data: acierto, error } = await sb.rpc("study_answer", { p_question_id: q.id, p_option_id: s.picked });
+    if (error || typeof acierto !== "boolean") throw error || new Error("sin datos");
     s.attempts++;
-    s.result = s.picked === t.correct ? "ok" : "bad";
+    s.result = acierto ? "ok" : "bad";
     if (s.result === "ok") { if (!s.failed.has(q.id)) s.firstTry.add(q.id); } else s.failed.add(q.id);
   } catch (e) { setNotice("err", errorText(e)); }
   s.busy = false; render();
@@ -917,6 +929,77 @@ function reportBox(questionId) {
 }
 
 /* Administración: listado de reportes */
+/* Panel de administración: usuarios */
+function adminTabs(activa) {
+  return h("div", { class: "row", style: "justify-content:space-between" },
+    h("div", { class: "seg", role: "group", "aria-label": "Panel" },
+      h("button", { type: "button", "aria-pressed": String(activa === "usuarios"), onclick: () => openUsuarios() }, "Usuarios"),
+      h("button", { type: "button", "aria-pressed": String(activa === "reportes"), onclick: () => openReportes() }, "Reportes")),
+    h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Inicio"));
+}
+
+async function openUsuarios() {
+  state.users = { items: null, error: null };
+  go("usuarios");
+  const st = state.users;
+  const { data, error } = await sb.rpc("admin_list_users");
+  if (state.users !== st) return;
+  if (error) st.error = errorText(error); else st.items = data || [];
+  if (state.view === "usuarios") render();
+}
+
+const ONLINE_MS = 150000;
+function lastAccess(u) {
+  const t = [u.last_sign_in_at, u.last_seen].filter(Boolean).map((x) => new Date(x).getTime());
+  return t.length ? Math.max(...t) : null;
+}
+function agoText(ms) {
+  if (ms == null) return "Sin acceso";
+  const d = Date.now() - ms;
+  if (d < 60000) return "hace un momento";
+  const m = Math.floor(d / 60000);
+  if (m < 60) return "hace " + m + " min";
+  const hh = Math.floor(m / 60);
+  if (hh < 24) return "hace " + hh + " h";
+  const dd = Math.floor(hh / 24);
+  if (dd < 30) return "hace " + dd + (dd === 1 ? " día" : " días");
+  return new Date(ms).toLocaleDateString("es-CL");
+}
+
+function viewUsuarios() {
+  const st = state.users || { items: null };
+  const lista = h("div", { class: "review" });
+  if (st.error) lista.append(h("div", { class: "msg err" }, st.error));
+  else if (!st.items) lista.append(h("p", { class: "muted" }, "Cargando…"));
+  else if (!st.items.length) lista.append(h("div", { class: "card empty" }, h("p", { class: "muted" }, "Aún no hay usuarios.")));
+  else for (const u of st.items) {
+    const la = lastAccess(u);
+    const online = u.last_seen && Date.now() - new Date(u.last_seen).getTime() < ONLINE_MS;
+    const nombre = u.display_name || (u.email || "").split("@")[0];
+    const ok = Number(u.correct), mal = Number(u.incorrect);
+    lista.append(h("article", { class: "card urow" },
+      h("div", { class: "avatar" + (online ? " online" : ""), title: online ? "En línea" : "Desconectado" }, (nombre || "?").charAt(0).toUpperCase()),
+      h("div", { class: "uinfo" },
+        h("b", {}, nombre),
+        h("span", { class: "muted" }, u.email),
+        h("div", { class: "row", style: "gap:6px;margin-top:4px" },
+          (u.plans && u.plans.length ? u.plans : ["Sin plan"]).map((p) => h("span", { class: "tag" + (u.plans && u.plans.length ? " ok" : "") }, p))),
+        h("span", { class: "hint" }, (online ? "En línea ahora" : "Último acceso: " + agoText(la)) + " · Registrado: " + new Date(u.created_at).toLocaleDateString("es-CL"))
+      ),
+      h("div", { class: "ustats" },
+        h("b", {}, String(ok + mal)),
+        h("span", { class: "muted" }, "respondidas"),
+        h("span", { class: "hint" }, "✔ " + ok + " · ✖ " + mal))
+    ));
+  }
+  return h("section", { class: "stack" },
+    adminTabs("usuarios"),
+    h("div", { class: "row", style: "justify-content:space-between" },
+      h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Usuarios" + (st.items ? " (" + st.items.length + ")" : "")),
+      h("button", { class: "btn ghost small", type: "button", onclick: () => openUsuarios() }, "Actualizar")),
+    lista);
+}
+
 async function openReportes(status) {
   state.reports = { status: status || "abierto", items: null, error: null };
   go("reportes");
@@ -969,9 +1052,8 @@ function viewReportes() {
     ));
   }
   return h("section", { class: "stack" },
-    h("div", { class: "row", style: "justify-content:space-between" },
-      h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Reportes de respuestas"),
-      h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "← Inicio")),
+    adminTabs("reportes"),
+    h("h1", { style: "font-size:clamp(22px,4vw,28px)" }, "Reportes de respuestas"),
     seg, lista);
 }
 
