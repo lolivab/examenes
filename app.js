@@ -164,6 +164,10 @@ async function loadQuestions(examId, ids, topics) {
   return list;
 }
 
+const PAGO = (() => { const m = /[?&]pago=(ok|pendiente|error)/.exec(location.search); return m ? m[1] : null; })();
+if (PAGO) safe(() => history.replaceState(null, "", location.pathname));
+let pagoPendiente = PAGO;
+
 let presenceTimer = null;
 function startPresence(on) {
   clearInterval(presenceTimer); presenceTimer = null;
@@ -204,12 +208,31 @@ async function loadAccount(session) {
     state.ents = (ents.data || []).filter((e) => e.plans);
     state.plans = plans.data || [];
     state.isAdmin = adm.data === true;
+    let aviso = null;
+    if (pagoPendiente) {
+      const p = pagoPendiente; pagoPendiente = null;
+      if (p === "ok") {
+        const antes = Number(safe(() => sessionStorage.getItem("kb_before"), "0")) || 0;
+        for (let i = 0; i < 6 && activeSlugs().size <= antes; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          await refreshEnts();
+        }
+        aviso = activeSlugs().size > antes
+          ? { type: "ok", text: "¡Pago recibido! Tu plan ya está activo." }
+          : { type: "warn", text: "Estamos confirmando tu pago. Tu acceso se activará en unos minutos; si no ocurre, recarga la página." };
+      } else if (p === "pendiente") {
+        aviso = { type: "warn", text: "Tu pago está pendiente. Cuando Mercado Pago lo confirme, tu plan se activará automáticamente." };
+      } else {
+        aviso = { type: "err", text: "El pago no se completó. No se hizo ningún cobro; puedes intentarlo de nuevo." };
+      }
+      if (mine !== loadSeq) return;
+    }
     if (hasActive()) {
       const ok = await loadExams();
       if (mine !== loadSeq) return;
-      go("inicio", ok ? null : { type: "err", text: "No se pudieron cargar los exámenes." });
+      go("inicio", ok ? aviso : { type: "err", text: "No se pudieron cargar los exámenes." });
     } else {
-      go("planes");
+      go("planes", aviso);
     }
   } catch {
     if (mine !== loadSeq) return;
@@ -437,7 +460,6 @@ function viewCuenta() {
 function viewPlanes() { return plansSection(false); }
 
 function plansSection(enCuenta) {
-  const pend = pendingEnt();
   const activos = activeSlugs();
   const tieneBase = activos.has("piloto-privado");
   const amplia = hasActive();
@@ -451,24 +473,16 @@ function plansSection(enCuenta) {
     )
   );
 
-  if (pend) {
-    sec.append(h("div", { class: "msg warn", role: "status" },
-      "Elegiste el plan " + pend.plans.name + ". El pago con Mercado Pago aún no está habilitado; " +
-      "cuando lo esté podrás completar la compra desde aquí y tu acceso se activará al confirmarse el pago."));
-  }
-
   const grid = h("div", { class: "plans" });
   for (const plan of state.plans) {
     const activo = activos.has(plan.slug);
-    const elegido = pend && pend.plans.slug === plan.slug;
     const esAmpliacion = !activo && tieneBase && !!plan.upgrade_from_plan_id;
     const precio = esAmpliacion ? fmtPrice(plan.upgrade_price_amount, plan.currency) : fmtPrice(plan.price_amount, plan.currency);
 
     let boton;
     if (activo) boton = h("button", { class: "btn block", type: "button", disabled: true }, "Plan activo");
-    else if (elegido) boton = h("button", { class: "btn block", type: "button", disabled: true }, "Elegido · pendiente de pago");
-    else boton = h("button", { class: "btn block", type: "button", onclick: (ev) => choosePlan(plan.slug, ev.currentTarget) },
-      esAmpliacion ? "Ampliar mi cuenta" : "Elegir plan");
+    else boton = h("button", { class: "btn block", type: "button", disabled: plan.price_amount == null, onclick: (ev) => choosePlan(plan.slug, ev.currentTarget) },
+      "Pagar " + precio);
 
     grid.append(h("article", { class: "card item" },
       activo ? h("span", { class: "tag ok" }, "Activo") : null,
@@ -485,11 +499,23 @@ function plansSection(enCuenta) {
 
 async function choosePlan(slug, btn) {
   btn.disabled = true;
+  safe(() => sessionStorage.setItem("kb_before", String(activeSlugs().size)));
+  const txt = btn.textContent;
+  btn.textContent = "Redirigiendo a Mercado Pago…";
   setNotice(null);
-  const { error } = await sb.rpc("select_plan", { p_plan_slug: slug });
-  if (error) { setNotice("err", errorText(error)); render(); return; }
-  await refreshEnts();
-  render();
+  try {
+    const { data, error } = await sb.functions.invoke("create-payment", { body: { plan_slug: slug } });
+    if (error || !data || !data.init_point) {
+      let msg = "No se pudo iniciar el pago. Inténtalo de nuevo.";
+      try { const j = error && error.context && (await error.context.json()); if (j && j.error) msg = j.error; } catch {}
+      throw new Error(msg);
+    }
+    location.href = data.init_point;
+  } catch (e) {
+    btn.disabled = false; btn.textContent = txt;
+    setNotice("err", e.message || "No se pudo iniciar el pago.");
+    render();
+  }
 }
 
 /* Inicio: exámenes disponibles */
