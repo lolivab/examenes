@@ -240,3 +240,5 @@ label{color:var(--mute);font-weight:600}
 .figs{display:grid;gap:10px;margin:0 0 14px}
 .fig{display:block;border:1px solid var(--line,#d9dce6);border-radius:12px;background:#fff;overflow:hidden}
 .fig img{display:block;width:100%;height:auto}
+
+.item.locked{opacity:.75;border-style:dashed}

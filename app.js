@@ -92,8 +92,25 @@ function fmtPrice(amount, currency) {
   }
 }
 
-const activeSlugs = () => new Set(state.ents.filter((e) => e.status === "active").map((e) => e.plans.slug));
-const hasActive = () => state.ents.some((e) => e.status === "active");
+const TRIAL = "prueba-gratis";
+const vigente = (e) => e.status === "active" && (!e.expires_at || new Date(e.expires_at) > new Date());
+const activeSlugs = () => new Set(state.ents.filter((e) => vigente(e) && e.plans.slug !== TRIAL).map((e) => e.plans.slug));
+const hasActive = () => state.ents.some(vigente);
+const trialEnt = () => state.ents.find((e) => e.plans.slug === TRIAL && vigente(e));
+const trialVencida = () => state.ents.some((e) => e.plans.slug === TRIAL && e.expires_at && new Date(e.expires_at) <= new Date());
+let trialTimer = null;
+function armTrialTimer() {
+  clearTimeout(trialTimer); trialTimer = null;
+  const t = trialEnt();
+  if (!t || !t.expires_at) return;
+  const ms = new Date(t.expires_at) - Date.now() + 1500;
+  if (ms > 0 && ms < 2147483000) trialTimer = setTimeout(() => { if (state.session) loadAccount(state.session); }, ms);
+}
+function tiempoRestante(iso) {
+  const min = Math.max(0, Math.round((new Date(iso) - Date.now()) / 60000));
+  const h24 = Math.floor(min / 60), m = min % 60;
+  return h24 > 0 ? h24 + " h " + m + " min" : m + " min";
+}
 const pendingEnt = () => state.ents.find((e) => e.status === "pending");
 const plural = (n, uno, otros) => n + " " + (n === 1 ? uno : otros);
 
@@ -111,7 +128,7 @@ function go(view, notice) {
 /* ---------- datos ---------- */
 
 async function refreshEnts() {
-  const { data } = await sb.from("entitlements").select("status, plans(slug,name)");
+  const { data } = await sb.from("entitlements").select("status, expires_at, plans(slug,name)");
   state.ents = (data || []).filter((e) => e.plans);
 }
 
@@ -176,7 +193,7 @@ async function loadAccount(session) {
     const catalogo = loadExams();
     const [prof, ents, plans, adm] = await Promise.all([
       sb.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
-      sb.from("entitlements").select("status, plans(slug,name)"),
+      sb.from("entitlements").select("status, expires_at, plans(slug,name)"),
       sb.from("plans")
         .select("slug,name,description,price_amount,currency,upgrade_from_plan_id,upgrade_price_amount,sort_order")
         .order("sort_order"),
@@ -206,12 +223,13 @@ async function loadAccount(session) {
       }
       if (mine !== loadSeq) return;
     }
+    armTrialTimer();
     if (hasActive()) {
       const ok = await catalogo;
       if (mine !== loadSeq) return;
       go("inicio", ok ? aviso : { type: "err", text: "No se pudieron cargar los exámenes." });
     } else {
-      go("planes", aviso);
+      go("planes", aviso || (trialVencida() ? { type: "warn", text: "Tu prueba gratis de 24 horas terminó. Elige un plan para seguir estudiando." } : null));
     }
   } catch {
     if (mine !== loadSeq) return;
@@ -447,7 +465,7 @@ function viewPlanes() { return plansSection(false); }
 function plansSection(enCuenta) {
   const activos = activeSlugs();
   const tieneBase = activos.has("piloto-privado");
-  const amplia = hasActive();
+  const amplia = activos.size > 0;
   const sec = h("section", { class: "stack" });
 
   sec.append(
@@ -523,12 +541,30 @@ function viewInicio() {
     h("p", { class: "muted", style: "margin-top:6px" }, "Elige un examen para estudiar o rendir un simulado.")
   ));
 
+  const prueba = trialEnt();
+  if (prueba) {
+    sec.append(h("div", { class: "msg warn", role: "status" },
+      "Estás en tu prueba gratis: tienes acceso a Piloto Privado por " + tiempoRestante(prueba.expires_at) + ". ",
+      h("button", { class: "link", type: "button", onclick: () => go("planes") }, "Ver planes")));
+  }
+
   if (!state.exams.length) {
     sec.append(h("div", { class: "card empty" }, h("p", { class: "muted" }, "Todavía no hay exámenes disponibles en tu cuenta.")));
   } else {
     const grid = h("div", { class: "exams" });
     for (const ex of state.exams) {
       const vacio = ex.total === 0;
+      if (ex.locked) {
+        grid.append(h("article", { class: "card item locked" },
+          h("span", { class: "tag" }, "🔒 " + plural(ex.total, "pregunta", "preguntas")),
+          h("h3", {}, ex.title),
+          h("p", { class: "muted grow" }, ex.description || ""),
+          h("p", { class: "hint" }, "Sin acceso con tu plan actual."),
+          h("div", { class: "row" },
+            h("button", { class: "btn", type: "button", onclick: () => go("planes") }, "Ver planes"))
+        ));
+        continue;
+      }
       grid.append(h("article", { class: "card item" },
         h("span", { class: "tag" }, plural(ex.total, "pregunta", "preguntas")),
         h("h3", {}, ex.title),
