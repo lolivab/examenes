@@ -56,6 +56,8 @@ function h(tag, props, ...kids) {
 }
 
 const KNOWN_ERRORS = new Set([
+  "Este usuario ya usó su prueba gratis",
+  "Este usuario ya tiene un plan activo",
   "Sin acceso a este examen",
   "Intento no válido o ya finalizado",
   "Intento no válido",
@@ -1025,6 +1027,16 @@ async function openUsuarios() {
   if (state.view === "usuarios") render();
 }
 
+async function adminTrial(u, nombre, btn) {
+  btn.disabled = true;
+  const { error } = await sb.rpc("admin_grant_trial", { p_user_id: u.user_id });
+  if (error) { setNotice("err", errorText(error)); render(); return; }
+  setNotice("ok", "Se dieron 24 horas de acceso gratis a " + nombre + " (solo Piloto Privado).");
+  await openUsuarios();
+  setNotice("ok", "Se dieron 24 horas de acceso gratis a " + nombre + " (solo Piloto Privado).");
+  render();
+}
+
 const ONLINE_MS = 150000;
 function lastAccess(u) {
   const t = [u.last_sign_in_at, u.last_seen].filter(Boolean).map((x) => new Date(x).getTime());
@@ -1064,6 +1076,8 @@ function viewUsuarios() {
         h("span", { class: "hint" }, (online ? "En línea ahora" : "Último acceso: " + agoText(la)) + " · Registrado: " + new Date(u.created_at).toLocaleDateString("es-CL"))
       ),
       h("div", { class: "ustats" },
+        (u.plans && u.plans.length) ? null
+          : h("button", { class: "btn ghost small", type: "button", onclick: (ev) => adminTrial(u, nombre, ev.currentTarget) }, "Dar 24 h gratis"),
         h("b", {}, String(ok + mal)),
         h("span", { class: "muted" }, "respondidas"),
         h("span", { class: "hint" }, "✔ " + ok + " · ✖ " + mal))
