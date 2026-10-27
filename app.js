@@ -202,7 +202,7 @@ async function loadAccount(session) {
     if (mine !== loadSeq) return;
     if (prof.data && prof.data.display_name) state.name = prof.data.display_name;
     state.ents = (ents.data || []).filter((e) => e.plans);
-    state.plans = plans.data || [];
+    state.plans = (plans.data || []).filter((p) => p.slug !== TRIAL);
     state.isAdmin = adm.data === true;
     let aviso = null;
     if (pagoPendiente) {
