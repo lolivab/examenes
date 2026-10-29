@@ -56,6 +56,7 @@ function h(tag, props, ...kids) {
 }
 
 const KNOWN_ERRORS = new Set([
+  "Cupón no válido",
   "Este usuario ya usó su prueba gratis",
   "Este usuario ya tiene un plan activo",
   "Sin acceso a este examen",
@@ -183,7 +184,7 @@ async function loadAccount(session) {
   if (state.recovery && !session) state.recovery = false;
   startPresence(!!session);
   if (!session) {
-    state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null; state.isAdmin = false; state.reports = null;
+    state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null; state.isAdmin = false; state.reports = null; state.coupon = null;
     go("visitante");
     return;
   }
@@ -478,11 +479,17 @@ function plansSection(enCuenta) {
     )
   );
 
+  sec.append(couponBox());
+
+  const cup = state.coupon;
+  const conDesc = (n) => Math.round(Number(n) * (100 - cup.percent) / 100);
   const grid = h("div", { class: "plans" });
   for (const plan of state.plans) {
     const activo = activos.has(plan.slug);
     const esAmpliacion = !activo && tieneBase && !!plan.upgrade_from_plan_id;
-    const precio = esAmpliacion ? fmtPrice(plan.upgrade_price_amount, plan.currency) : fmtPrice(plan.price_amount, plan.currency);
+    const monto = esAmpliacion ? plan.upgrade_price_amount : plan.price_amount;
+    const precioLista = fmtPrice(monto, plan.currency);
+    const precio = cup && monto != null ? fmtPrice(conDesc(monto), plan.currency) : precioLista;
 
     let ahorro = null;
     const base = state.plans.find((x) => x.id === plan.upgrade_from_plan_id) || state.plans.find((x) => x.slug === "piloto-privado");
@@ -503,13 +510,41 @@ function plansSection(enCuenta) {
       esAmpliacion ? h("span", { class: "tag" }, "Ampliación desde Piloto Privado") : null,
       h("h3", {}, plan.name),
       h("p", { class: "muted grow" }, plan.description || ""),
-      h("div", { class: "price" }, precio),
+      h("div", { class: "price" }, cup && monto != null ? h("s", { class: "muted", style: "font-size:.6em;margin-right:8px" }, precioLista) : null, precio),
+      cup && monto != null ? h("span", { class: "tag ok" }, "Cupón " + cup.code + " · " + cup.percent + "% de descuento") : null,
       ahorro,
       boton
     ));
   }
   sec.append(grid);
   return sec;
+}
+
+function couponBox() {
+  const cup = state.coupon;
+  const msg = h("p", { class: "hint", role: "status", hidden: true });
+  const input = h("input", { id: "cupon", type: "text", placeholder: "Código de cupón", autocomplete: "off", maxlength: "30", style: "text-transform:uppercase" });
+  const btn = h("button", { class: "btn ghost small", type: "button" }, "Aplicar");
+  const aplicar = async () => {
+    const code = input.value.trim().toUpperCase();
+    if (!code) return;
+    btn.disabled = true; msg.hidden = true;
+    const { data, error } = await sb.rpc("validate_coupon", { p_code: code });
+    btn.disabled = false;
+    if (error) { msg.textContent = errorText(error); msg.hidden = false; return; }
+    state.coupon = { code, percent: Number(data) };
+    render();
+  };
+  btn.addEventListener("click", aplicar);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); aplicar(); } });
+  if (cup) {
+    return h("div", { class: "card row", style: "justify-content:space-between" },
+      h("span", {}, "Cupón ", h("b", {}, cup.code), " aplicado: " + cup.percent + "% de descuento."),
+      h("button", { class: "link", type: "button", onclick: () => { state.coupon = null; render(); } }, "Quitar"));
+  }
+  return h("div", { class: "card stack", style: "max-width:460px" },
+    h("label", { for: "cupon" }, "¿Tienes un cupón de descuento?"),
+    h("div", { class: "row" }, input, btn), msg);
 }
 
 async function choosePlan(slug, btn) {
@@ -519,7 +554,7 @@ async function choosePlan(slug, btn) {
   btn.textContent = "Redirigiendo a Mercado Pago…";
   setNotice(null);
   try {
-    const { data, error } = await sb.functions.invoke("create-payment", { body: { plan_slug: slug } });
+    const { data, error } = await sb.functions.invoke("create-payment", { body: { plan_slug: slug, coupon_code: state.coupon ? state.coupon.code : null } });
     if (error || !data || !data.init_point) {
       let msg = "No se pudo iniciar el pago. Inténtalo de nuevo.";
       try { const j = error && error.context && (await error.context.json()); if (j && j.error) msg = j.error; } catch {}
