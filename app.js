@@ -1190,14 +1190,34 @@ function viewResultado() {
   const pct = total ? Math.round((s.score / total) * 100) : 0;
 
   const items = h("div", { class: "review" });
+  const resumen = h("div", { class: "card summary" });
+  resumen.append(h("h2", {}, "Resumen de tus respuestas"));
+  const tabla = h("div", { class: "sumlist" });
+  let nro = 0;
   for (const r of s.review) {
     const q = s.qs.find((x) => x.id === r.question_id);
     if (!q) continue;
+    nro++;
+    const n = nro;
+    const el = q.options.find((o) => o.id === r.chosen_option_id);
+    const co = q.options.find((o) => o.id === r.correct_option_id);
+    const cls = !el ? "none" : r.is_correct ? "ok" : "bad";
+    tabla.append(h("button", { type: "button", class: "sumrow " + cls, onclick: () => { const t = document.getElementById("pq" + n); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); } },
+      h("span", { class: "sn" }, String(n)),
+      h("span", { class: "sq" }, q.statement.length > 110 ? q.statement.slice(0, 107) + "…" : q.statement),
+      h("span", { class: "sa" }, h("b", {}, el ? el.label : "—"), h("span", { class: "muted" }, " → "), h("b", {}, co ? co.label : "—"), h("span", { class: "mark" }, !el ? "·" : r.is_correct ? "✔" : "✖"))));
+  }
+  resumen.append(tabla, h("p", { class: "hint" }, "Cada fila muestra tu respuesta → la correcta. Toca una fila para ir a su explicación."));
+  nro = 0;
+  for (const r of s.review) {
+    const q = s.qs.find((x) => x.id === r.question_id);
+    if (!q) continue;
+    nro++;
     const elegida = q.options.find((o) => o.id === r.chosen_option_id);
     const correcta = q.options.find((o) => o.id === r.correct_option_id);
     const estado = !elegida ? ["", "Sin responder"] : r.is_correct ? ["ok", "Correcta"] : ["bad", "Incorrecta"];
-    items.append(h("article", { class: "card" },
-      h("span", { class: "tag " + estado[0] }, estado[1]),
+    items.append(h("article", { class: "card", id: "pq" + nro },
+      h("span", { class: "tag " + estado[0] }, "Pregunta " + nro + " · " + estado[1]),
       h("h2", { class: "qtext", style: "margin-top:8px" }, q.statement),
       figuresBlock(q),
       h("p", { class: "answer" }, h("b", {}, "Tu respuesta: "), elegida ? elegida.label + ". " + elegida.text : "—"),
@@ -1216,9 +1236,192 @@ function viewResultado() {
     ),
     h("div", { class: "row" },
       h("button", { class: "btn", type: "button", onclick: () => go("inicio") }, "Volver al inicio"),
-      h("button", { class: "btn ghost", type: "button", onclick: () => { state.simCfg = { exam: s.exam, sel: new Set(s.sel), count: total }; go("simcfg"); } }, "Repetir examen")
+      h("button", { class: "btn ghost", type: "button", onclick: () => { state.simCfg = { exam: s.exam, sel: new Set(s.sel), count: total }; go("simcfg"); } }, "Repetir examen"),
+      h("button", { class: "btn share", type: "button", onclick: () => { s.share = s.share || { fmt: "story", name: false }; s.share.open = !s.share.open; render(); } }, "📸 Compartir mi resultado en Instagram")
     ),
+    s.share && s.share.open ? sharePanel(s) : null,
+    resumen,
     items
+  );
+}
+
+/* ---------- Compartir resultado (imagen) ---------- */
+
+function notaChile(pct) { // escala 1,0–7,0 con 60 % de exigencia (referencial)
+  const n = pct >= 60 ? 4 + 3 * (pct - 60) / 40 : 1 + 3 * pct / 60;
+  return n.toFixed(1).replace(".", ",");
+}
+
+function statsResultado(s) {
+  const total = s.qs.length;
+  let ok = 0, mal = 0, sin = 0;
+  const porTema = new Map();
+  for (const r of s.review) {
+    const q = s.qs.find((x) => x.id === r.question_id);
+    if (!q) continue;
+    const el = q.options.find((o) => o.id === r.chosen_option_id);
+    const t = q.topic || "General";
+    const a = porTema.get(t) || { ok: 0, n: 0 };
+    a.n++;
+    if (!el) sin++; else if (r.is_correct) { ok++; a.ok++; } else mal++;
+    porTema.set(t, a);
+  }
+  const pct = total ? (ok / total) * 100 : 0;
+  return { total, ok, mal, sin, pct, temas: [...porTema].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.n - a.n) };
+}
+
+function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function wrapText(ctx, text, maxW) {
+  const words = text.split(" "); const lines = []; let cur = "";
+  for (const w of words) { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t; }
+  if (cur) lines.push(cur); return lines;
+}
+function loadImg(src) { return new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; }); }
+
+async function drawShare(canvas, s, opts) {
+  const W = 1080, H = opts.fmt === "story" ? 1920 : 1350;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  const st = statsResultado(s);
+  const FONT = '"Plus Jakarta Sans", system-ui, sans-serif';
+  try { await Promise.all([800, 700, 500].map((w) => document.fonts.load(w + " 40px " + FONT))); } catch {}
+  const logo = await loadImg("img/logo.webp");
+
+  // fondo
+  const g = ctx.createLinearGradient(0, 0, W * 0.4, H);
+  g.addColorStop(0, "#0B1220"); g.addColorStop(0.55, "#1B1F5C"); g.addColorStop(1, "#4338CA");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // cartas de navegación (círculos concéntricos)
+  ctx.strokeStyle = "rgba(255,255,255,.06)"; ctx.lineWidth = 2;
+  for (let r = 160; r < 1500; r += 150) { ctx.beginPath(); ctx.arc(W * 0.85, H * 0.28, r, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(0, H * 0.28 + 90); ctx.lineTo(W, H * 0.28 - 160); ctx.stroke();
+
+  const story = opts.fmt === "story";
+  const P = story
+    ? { top: 90, logoW: 330, afterLogo: 50, titleSz: 52, R: 200, ringLw: 40, cards: true, pillH: 70, gapMsg: 44, footer: 210 }
+    : { top: 56, logoW: 210, afterLogo: 34, titleSz: 46, R: 140, ringLw: 32, cards: false, pillH: 60, gapMsg: 36, footer: 150 };
+  let y = P.top;
+  // logo
+  if (logo) {
+    const lw = P.logoW, lh = lw * logo.height / logo.width, lx = (W - lw) / 2;
+    ctx.save(); rr(ctx, lx, y, lw, lh, 30); ctx.clip(); ctx.drawImage(logo, lx, y, lw, lh); ctx.restore();
+    ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = 3; rr(ctx, lx, y, lw, lh, 30); ctx.stroke();
+    y += lh + P.afterLogo;
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  const quien = opts.name && state.name ? "RESULTADO DE " + state.name.split(" ")[0].toUpperCase() : "MI RESULTADO";
+  ctx.fillStyle = "#A5B4FC"; ctx.font = "700 " + (story ? 32 : 28) + "px " + FONT;
+  ctx.fillText(quien + " · EXAMEN SIMULADO", W / 2, y + 28); y += 28;
+  ctx.fillStyle = "#fff"; ctx.font = "800 " + P.titleSz + "px " + FONT;
+  const lines = wrapText(ctx, s.exam.title, W - 140).slice(0, 2);
+  for (const l of lines) { y += P.titleSz + 14; ctx.fillText(l, W / 2, y); }
+  y += story ? 44 : 30;
+
+  // anillo
+  const R = P.R, cy = y + R + 16, cx = W / 2;
+  ctx.lineWidth = P.ringLw; ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(255,255,255,.14)"; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+  const aprobo = st.pct >= 60;
+  const ring = ctx.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+  ring.addColorStop(0, aprobo ? "#34D399" : "#F2BD55"); ring.addColorStop(1, aprobo ? "#A7F3D0" : "#FDE68A");
+  ctx.strokeStyle = ring;
+  if (st.pct > 0) { ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (st.pct / 100)); ctx.stroke(); }
+  ctx.fillStyle = "#fff"; ctx.font = "800 " + (R * 0.6) + "px " + FONT; ctx.fillText(Math.round(st.pct) + "%", cx, cy + R * 0.1);
+  ctx.fillStyle = "#C7D2FE"; ctx.font = "600 " + (R * 0.16) + "px " + FONT; ctx.fillText(st.ok + " de " + st.total + " correctas", cx, cy + R * 0.4);
+  y = cy + R + (story ? 56 : 46);
+
+  // nota + mensaje
+  const nota = "Nota " + notaChile(st.pct);
+  ctx.font = "800 " + (story ? 44 : 38) + "px " + FONT; const pw = ctx.measureText(nota).width + 76;
+  ctx.fillStyle = aprobo ? "#047857" : "#B45309"; rr(ctx, (W - pw) / 2, y, pw, P.pillH, P.pillH / 2); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.fillText(nota, W / 2, y + P.pillH * 0.7); y += P.pillH + P.gapMsg;
+  const msg = st.pct >= 90 ? "¡Vuelo impecable!" : st.pct >= 75 ? "¡Aterrizaje seguro!" : st.pct >= 60 ? "Aprobado: sigo practicando" : "En entrenamiento: voy por más";
+  ctx.fillStyle = "#fff"; ctx.font = "700 " + (story ? 38 : 34) + "px " + FONT; ctx.fillText(msg, W / 2, y); y += story ? 54 : 40;
+
+  // aciertos
+  if (P.cards) {
+    const cw = 290, gap = 24, x0 = (W - (cw * 3 + gap * 2)) / 2;
+    [["Correctas", st.ok, "#34D399"], ["Incorrectas", st.mal, "#F87171"], ["Sin responder", st.sin, "#A7B3C6"]].forEach(([lab, val, col], i) => {
+      const x = x0 + i * (cw + gap);
+      ctx.fillStyle = "rgba(255,255,255,.09)"; rr(ctx, x, y, cw, 120, 26); ctx.fill();
+      ctx.fillStyle = col; ctx.font = "800 54px " + FONT; ctx.fillText(String(val), x + cw / 2, y + 64);
+      ctx.fillStyle = "#C7D2FE"; ctx.font = "600 25px " + FONT; ctx.fillText(lab, x + cw / 2, y + 100);
+    });
+    y += 120 + 46;
+  } else {
+    ctx.font = "700 30px " + FONT;
+    const partes = [[st.ok + " correctas", "#34D399"], [st.mal + " incorrectas", "#F87171"], [st.sin + " sin responder", "#A7B3C6"]];
+    const sep = "   ·   "; const total = partes.map((p) => ctx.measureText(p[0]).width).reduce((a, b) => a + b, 0) + ctx.measureText(sep).width * 2;
+    let x = (W - total) / 2; ctx.textAlign = "left";
+    partes.forEach((p, i) => { ctx.fillStyle = p[1]; ctx.fillText(p[0], x, y); x += ctx.measureText(p[0]).width; if (i < 2) { ctx.fillStyle = "#6B7AA8"; ctx.fillText(sep, x, y); x += ctx.measureText(sep).width; } });
+    ctx.textAlign = "center"; y += 44;
+  }
+
+  // contenidos (los que quepan sobre el pie)
+  const footerTop = H - P.footer;
+  const rowH = 78, headH = 44;
+  const cupo = Math.max(0, Math.min(story ? 7 : 4, Math.floor((footerTop - y - headH) / rowH)));
+  if (cupo > 0) {
+    ctx.textAlign = "left"; ctx.fillStyle = "#A5B4FC"; ctx.font = "700 28px " + FONT;
+    ctx.fillText("CONTENIDOS EVALUADOS", 90, y + 10); y += headH - 14;
+    const resto = st.temas.length - cupo;
+    const mostrar = resto > 0 ? st.temas.slice(0, cupo - 1) : st.temas.slice(0, cupo);
+    for (const t of mostrar) {
+      y += 38;
+      ctx.fillStyle = "#fff"; ctx.font = "600 29px " + FONT;
+      let nm = t.name; while (ctx.measureText(nm).width > 700 && nm.length > 4) nm = nm.slice(0, -2);
+      if (nm !== t.name) nm = nm.trim() + "…";
+      ctx.fillText(nm, 90, y);
+      ctx.textAlign = "right"; ctx.fillStyle = "#C7D2FE"; ctx.fillText(t.ok + "/" + t.n, W - 90, y); ctx.textAlign = "left";
+      y += 14;
+      ctx.fillStyle = "rgba(255,255,255,.14)"; rr(ctx, 90, y, W - 180, 13, 7); ctx.fill();
+      if (t.n && t.ok) { ctx.fillStyle = t.ok / t.n >= 0.6 ? "#34D399" : "#F2BD55"; rr(ctx, 90, y, Math.max(13, (W - 180) * t.ok / t.n), 13, 7); ctx.fill(); }
+      y += 26;
+    }
+    if (resto > 0) { y += 30; ctx.fillStyle = "#A7B3C6"; ctx.font = "500 26px " + FONT; ctx.fillText("+ " + (resto + 1) + " asignaturas más", 90, y); }
+  }
+
+  // pie
+  ctx.textAlign = "center";
+  const fy = H - (story ? 120 : 76);
+  ctx.fillStyle = "#fff"; ctx.font = "800 " + (story ? 44 : 38) + "px " + FONT; ctx.fillText("Practica tú también en pilotprep.cl", W / 2, fy);
+  ctx.fillStyle = "#A5B4FC"; ctx.font = "600 " + (story ? 28 : 26) + "px " + FONT; ctx.fillText("Aprender · Practicar · Aprobar", W / 2, fy + 44);
+}
+
+function sharePanel(s) {
+  const sh = s.share;
+  const canvas = h("canvas", { class: "sharecv", "aria-label": "Vista previa de tu resultado" });
+  const redraw = () => drawShare(canvas, s, { fmt: sh.fmt, name: sh.name });
+  redraw();
+  const toBlob = () => new Promise((res) => canvas.toBlob(res, "image/png"));
+  const archivo = "pilotprep-resultado.png";
+  const msg = h("p", { class: "hint", role: "status", hidden: true });
+  const compartir = async () => {
+    const blob = await toBlob(); if (!blob) return;
+    const f = new File([blob], archivo, { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+      try { await navigator.share({ files: [f], title: "Mi resultado en PilotPrep", text: "Mi resultado en PilotPrep.cl" }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    descargar();
+  };
+  const descargar = async () => {
+    const blob = await toBlob(); if (!blob) return;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = archivo; document.body.append(a); a.click(); a.remove();
+    msg.textContent = "Imagen descargada. Súbela a Instagram desde tu galería."; msg.hidden = false;
+  };
+  const seg = (fmt, txt) => h("button", { type: "button", "aria-pressed": String(sh.fmt === fmt), onclick: () => { sh.fmt = fmt; render(); } }, txt);
+  const nombre = h("input", { id: "shname", type: "checkbox", class: "chk" }); nombre.checked = sh.name;
+  nombre.addEventListener("change", () => { sh.name = nombre.checked; redraw(); });
+  return h("div", { class: "card stack sharebox" },
+    h("h2", {}, "Tu resultado para Instagram"),
+    h("div", { class: "seg", role: "group", "aria-label": "Formato" }, seg("story", "Historia 9:16"), seg("post", "Publicación 4:5")),
+    h("div", { class: "sharewrap" }, canvas),
+    h("label", { for: "shname", class: "chk-label" }, nombre, "Incluir mi nombre"),
+    h("div", { class: "row" },
+      h("button", { class: "btn", type: "button", onclick: compartir }, "Compartir"),
+      h("button", { class: "btn ghost", type: "button", onclick: descargar }, "Descargar imagen")),
+    msg,
+    h("p", { class: "hint" }, "La nota es referencial (escala 1,0–7,0 con 60 % de exigencia).")
   );
 }
 
