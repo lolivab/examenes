@@ -256,3 +256,4 @@ label{color:var(--mute);font-weight:600}
 .btn.share{background:linear-gradient(135deg,#4338CA,#C2306E);color:#fff}
 .sharewrap{display:flex;justify-content:center}
 .sharecv{width:min(100%,380px);height:auto;border-radius:18px;box-shadow:var(--shadow)}
+.tag{border:0;font-family:inherit}

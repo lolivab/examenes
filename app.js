@@ -166,15 +166,51 @@ const PAGO = (() => { const m = /[?&]pago=(ok|pendiente|error)/.exec(location.se
 if (PAGO) safe(() => history.replaceState(null, "", location.pathname));
 let pagoPendiente = PAGO;
 
+/* ---------- sesión única y dispositivos ---------- */
+
+const deviceId = () => {
+  let id = safe(() => localStorage.getItem("pp_device"), null);
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+    safe(() => localStorage.setItem("pp_device", id));
+  }
+  return id;
+};
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  const so = /Android/.test(ua) ? "Android" : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "Otro";
+  const nav = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Navegador";
+  return nav + " · " + so;
+}
+const sessionIdOf = (session) => {
+  try { return JSON.parse(atob(session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).session_id || null; } catch { return null; }
+};
+let expulsado = false;
+async function syncSession(claim) {
+  const { data, error } = await sb.rpc("session_sync", { p_device: deviceId(), p_label: deviceLabel(), p_claim: !!claim });
+  if (error) return null;
+  return data === true;
+}
+async function expulsar() {
+  if (expulsado) return;
+  expulsado = true;
+  await sb.auth.signOut();
+}
+
 let presenceTimer = null;
 function startPresence(on) {
   clearInterval(presenceTimer); presenceTimer = null;
+  if (startPresence.off) { startPresence.off(); startPresence.off = null; }
   if (!on) return;
-  const ping = () => { if (document.visibilityState === "visible") sb.rpc("touch_presence").then(() => {}, () => {}); };
-  ping();
+  const ping = async () => {
+    if (document.visibilityState !== "visible") return;
+    sb.rpc("touch_presence").then(() => {}, () => {});
+    if (await syncSession(false) === false) expulsar();
+  };
   presenceTimer = setInterval(ping, 60000);
+  document.addEventListener("visibilitychange", ping);
+  startPresence.off = () => document.removeEventListener("visibilitychange", ping);
 }
-document.addEventListener("visibilitychange", () => { if (presenceTimer && document.visibilityState === "visible") sb.rpc("touch_presence").then(() => {}, () => {}); });
 
 let loadSeq = 0;
 async function loadAccount(session) {
@@ -182,14 +218,25 @@ async function loadAccount(session) {
   state.session = session;
   if (state.recovery && session) { go("recuperar"); return; }
   if (state.recovery && !session) state.recovery = false;
-  startPresence(!!session);
+  if (!session) startPresence(false);
   if (!session) {
     state.name = ""; state.ents = []; state.exams = []; state.study = null; state.sim = null; state.simCfg = null; state.studyCfg = null; state.isAdmin = false; state.reports = null; state.coupon = null;
-    go("visitante");
+    const kick = expulsado; expulsado = false;
+    go("visitante", kick ? { type: "warn", text: "Tu cuenta se abrió en otro dispositivo, por eso cerramos esta sesión. Solo se permite una sesión activa por cuenta." } : null);
     return;
   }
   state.view = "cargando";
   render();
+  expulsado = false;
+  {
+    const sid = sessionIdOf(session);
+    const nuevo = sid && safe(() => authStorage.getItem("pp_sid"), null) !== sid;
+    const ok = await syncSession(nuevo);
+    if (mine !== loadSeq) return;
+    if (ok === false) { expulsado = true; await sb.auth.signOut(); return; }
+    if (sid) safe(() => authStorage.setItem("pp_sid", sid));
+    startPresence(true);
+  }
   const user = session.user;
   state.name = (user.user_metadata && user.user_metadata.display_name) || (user.email || "").split("@")[0];
   try {
@@ -1056,9 +1103,10 @@ async function openUsuarios() {
   state.users = { items: null, error: null };
   go("usuarios");
   const st = state.users;
-  const { data, error } = await sb.rpc("admin_list_users");
+  const [{ data, error }, cnt] = await Promise.all([sb.rpc("admin_list_users"), sb.rpc("admin_device_counts")]);
   if (state.users !== st) return;
-  if (error) st.error = errorText(error); else st.items = data || [];
+  const dev = new Map((cnt.data || []).map((d) => [d.user_id, Number(d.devices)]));
+  if (error) st.error = errorText(error); else st.items = (data || []).map((u) => ({ ...u, devices: dev.get(u.user_id) || 0 }));
   if (state.view === "usuarios") render();
 }
 
@@ -1070,6 +1118,22 @@ async function adminTrial(u, nombre, btn) {
   await openUsuarios();
   setNotice("ok", "Se dieron 24 horas de acceso gratis a " + nombre + " (solo Piloto Privado).");
   render();
+}
+
+async function toggleDevices(u) {
+  const st = state.users;
+  if (st.open === u.user_id) { st.open = null; render(); return; }
+  st.open = u.user_id; st.devs = null; render();
+  const { data, error } = await sb.rpc("admin_user_devices", { p_user_id: u.user_id });
+  if (st.open !== u.user_id) return;
+  st.devs = error ? [] : data || [];
+  render();
+}
+function devicesList(st, u) {
+  if (!st.devs) return h("span", { class: "hint" }, "Cargando…");
+  return h("div", { class: "stack", style: "gap:4px;margin-top:6px" },
+    st.devs.map((d) => h("span", { class: "hint" },
+      (d.is_current ? "● " : "○ ") + (d.label || "Dispositivo") + " · visto " + agoText(new Date(d.last_seen).getTime()) + " · desde " + new Date(d.first_seen).toLocaleDateString("es-CL") + (d.is_current ? " · sesión activa" : ""))));
 }
 
 const ONLINE_MS = 150000;
@@ -1108,7 +1172,10 @@ function viewUsuarios() {
         h("span", { class: "muted" }, u.email),
         h("div", { class: "row", style: "gap:6px;margin-top:4px" },
           (u.plans && u.plans.length ? u.plans : ["Sin plan"]).map((p) => h("span", { class: "tag" + (u.plans && u.plans.length ? " ok" : "") }, p))),
-        h("span", { class: "hint" }, (online ? "En línea ahora" : "Último acceso: " + agoText(la)) + " · Registrado: " + new Date(u.created_at).toLocaleDateString("es-CL"))
+        h("span", { class: "hint" }, (online ? "En línea ahora" : "Último acceso: " + agoText(la)) + " · Registrado: " + new Date(u.created_at).toLocaleDateString("es-CL")),
+        u.devices ? h("button", { class: "tag" + (u.devices >= 3 ? " warn" : ""), type: "button", style: "cursor:pointer;margin-top:4px;align-self:flex-start",
+          onclick: () => toggleDevices(u) }, "📱 " + plural(u.devices, "dispositivo", "dispositivos") + (u.devices >= 3 ? " · revisar" : "")) : null,
+        st.open === u.user_id ? devicesList(st, u) : null
       ),
       h("div", { class: "ustats" },
         (u.plans && u.plans.length) ? null
