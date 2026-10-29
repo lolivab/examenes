@@ -1247,11 +1247,6 @@ function viewResultado() {
 
 /* ---------- Compartir resultado (imagen) ---------- */
 
-function notaChile(pct) { // escala 1,0–7,0 con 60 % de exigencia (referencial)
-  const n = pct >= 60 ? 4 + 3 * (pct - 60) / 40 : 1 + 3 * pct / 60;
-  return n.toFixed(1).replace(".", ",");
-}
-
 function statsResultado(s) {
   const total = s.qs.length;
   let ok = 0, mal = 0, sin = 0;
@@ -1328,13 +1323,9 @@ async function drawShare(canvas, s, opts) {
   if (st.pct > 0) { ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (st.pct / 100)); ctx.stroke(); }
   ctx.fillStyle = "#fff"; ctx.font = "800 " + (R * 0.6) + "px " + FONT; ctx.fillText(Math.round(st.pct) + "%", cx, cy + R * 0.1);
   ctx.fillStyle = "#C7D2FE"; ctx.font = "600 " + (R * 0.16) + "px " + FONT; ctx.fillText(st.ok + " de " + st.total + " correctas", cx, cy + R * 0.4);
-  y = cy + R + (story ? 56 : 46);
+  y = cy + R + (story ? 92 : 70);
 
-  // nota + mensaje
-  const nota = "Nota " + notaChile(st.pct);
-  ctx.font = "800 " + (story ? 44 : 38) + "px " + FONT; const pw = ctx.measureText(nota).width + 76;
-  ctx.fillStyle = aprobo ? "#047857" : "#B45309"; rr(ctx, (W - pw) / 2, y, pw, P.pillH, P.pillH / 2); ctx.fill();
-  ctx.fillStyle = "#fff"; ctx.fillText(nota, W / 2, y + P.pillH * 0.7); y += P.pillH + P.gapMsg;
+  // mensaje
   const msg = st.pct >= 90 ? "¡Vuelo impecable!" : st.pct >= 75 ? "¡Aterrizaje seguro!" : st.pct >= 60 ? "Aprobado: sigo practicando" : "En entrenamiento: voy por más";
   ctx.fillStyle = "#fff"; ctx.font = "700 " + (story ? 38 : 34) + "px " + FONT; ctx.fillText(msg, W / 2, y); y += story ? 54 : 40;
 
@@ -1420,8 +1411,7 @@ function sharePanel(s) {
     h("div", { class: "row" },
       h("button", { class: "btn", type: "button", onclick: compartir }, "Compartir"),
       h("button", { class: "btn ghost", type: "button", onclick: descargar }, "Descargar imagen")),
-    msg,
-    h("p", { class: "hint" }, "La nota es referencial (escala 1,0–7,0 con 60 % de exigencia).")
+    msg
   );
 }
 
