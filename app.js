@@ -576,7 +576,7 @@ function couponBox() {
     const code = input.value.trim().toUpperCase();
     if (!code) return;
     btn.disabled = true; msg.hidden = true;
-    const { data, error } = await sb.rpc("validate_coupon", { p_code: code });
+    const { data, error } = await sb.rpc("validate_coupon_n", { p_code: code });
     btn.disabled = false;
     if (error) { msg.textContent = errorText(error); msg.hidden = false; return; }
     state.coupon = { code, percent: Number(data) };
