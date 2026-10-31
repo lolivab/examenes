@@ -338,7 +338,7 @@ function topbar() {
     h("button", { class: "brand", type: "button", "aria-label": "PilotPrep, ir al inicio", onclick: () => go(hasActive() ? "inicio" : "planes") },
       h("img", { src: "img/icon.png", alt: "", width: "36", height: "36" }), h("span", {}, "PilotPrep")),
     h("div", { class: "user usermenu" },
-      state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openCabina() }, "Cabina 3D") : null,
+      puedeCabina() ? h("button", { class: "btn ghost small", type: "button", onclick: () => openCabina() }, "Cabina 3D") : null,
       state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openUsuarios() }, "Panel") : null,
       h("button", { class: "userlink" + (state.view === "cuenta" || state.menu ? " on" : ""), type: "button", "aria-haspopup": "menu", "aria-expanded": String(!!state.menu), "aria-label": "Menú de usuario",
         onclick: (ev) => { ev.stopPropagation(); state.menu = !state.menu; render(); } },
@@ -1480,9 +1480,11 @@ function reportBox(questionId) {
   return caja;
 }
 
-/* Cabina 3D A320 (prototipo privado): el contenido vive en la tabla privado_archivos, que solo lee un administrador (RLS) */
+/* Cabina 3D A320 (prototipo privado): el contenido vive en la tabla privado_archivos; la RLS solo deja leerlo al dueño del proyecto */
+const CABINA_UID = "760b27aa-3608-44a4-9772-cd4a7baec195";
+const puedeCabina = () => !!(state.session && state.session.user && state.session.user.id === CABINA_UID);
 async function openCabina() {
-  if (!state.isAdmin) return;
+  if (!puedeCabina()) return;
   state.cabina = { html: null, error: null };
   go("cabina");
   const st = state.cabina;
@@ -1494,7 +1496,7 @@ async function openCabina() {
 
 function viewCabina() {
   const st = state.cabina;
-  if (!state.isAdmin || !st) return h("p", { class: "muted" }, "Sin acceso.");
+  if (!puedeCabina() || !st) return h("p", { class: "muted" }, "Sin acceso.");
   return h("div", { class: "stack" },
     h("div", { class: "row" },
       h("button", { class: "btn ghost small", type: "button", onclick: () => go(hasActive() ? "inicio" : "planes") }, "← Volver"),
