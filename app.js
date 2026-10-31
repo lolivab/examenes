@@ -736,6 +736,15 @@ const byTopic = (qs, isDone) => {
   return [...m.values()];
 };
 
+function mbar(pct, titulo, sub, t0, extra) {
+  return h("div", { class: "mbar" },
+    h("div", { class: "ring mini", style: "--p:" + Math.max(0, Math.min(100, pct)), "aria-hidden": "true" }, h("div", {})),
+    h("div", { class: "mtxt" }, h("b", {}, titulo), h("span", {}, sub)),
+    h("span", { class: "mclk" }, "⏱ ", h("b", { class: "clk", "data-t0": String(t0) }, fmtTime(Date.now() - t0))),
+    extra || null);
+}
+const vibra = (p) => { try { if (navigator.vibrate) navigator.vibrate(p); } catch {} };
+
 function studyPanel(s, faltan) {
   const resueltas = s.total - faltan;
   const pct = Math.round(resueltas / s.total * 100);
@@ -762,6 +771,26 @@ function studyPanel(s, faltan) {
         h("span", {}, h("i", { class: "bad" }), "Por repetir"), h("span", {}, h("i", {}), "Nueva"))),
     topicBars(byTopic(s.qs, (q) => !pendIds.has(q.id)))
   );
+}
+
+function simSheet(s, sinResponder) {
+  const nav = h("div", { class: "qnav", role: "group", "aria-label": "Ir a la pregunta" });
+  s.qs.forEach((q, idx) => nav.append(h("button", {
+    type: "button", class: (s.answers[q.id] ? "done " : "") + (idx === s.i ? "cur" : ""),
+    "aria-label": "Pregunta " + (idx + 1) + (s.answers[q.id] ? " respondida" : " sin responder"),
+    onclick: (ev) => simGoto(idx, ev.currentTarget)
+  }, String(idx + 1))));
+  const cerrar = () => { s.sheet = false; render(); };
+  return h("div", { class: "sheetwrap" },
+    h("div", { class: "sheetbg", onclick: cerrar }),
+    h("div", { class: "sheet", role: "dialog", "aria-label": "Preguntas del examen" },
+      h("div", { class: "grab" }),
+      h("div", { class: "row", style: "justify-content:space-between" },
+        h("h3", { class: "ptitle", style: "margin:0" }, "Preguntas · " + (s.qs.length - sinResponder) + "/" + s.qs.length + " respondidas"),
+        h("button", { class: "btn ghost small", type: "button", onclick: cerrar }, "Cerrar")),
+      nav,
+      h("div", { class: "legend" }, h("span", {}, h("i", { class: "done" }), "Respondida"), h("span", {}, h("i", {}), "Sin responder"), h("span", {}, h("i", { class: "curfill" }), "Actual")),
+      h("button", { class: "btn block", type: "button", onclick: (ev) => simFinish(ev.currentTarget) }, "Finalizar examen")));
 }
 
 function simPanel(s, sinResponder) {
@@ -908,6 +937,7 @@ async function studyAnswer(btn) {
     if (error || typeof acierto !== "boolean") throw error || new Error("sin datos");
     s.attempts++;
     s.result = acierto ? "ok" : "bad";
+    vibra(acierto ? 18 : [45, 60, 45]);
     if (s.result === "ok") { s.streak++; if (!s.failed.has(q.id)) s.firstTry.add(q.id); } else { s.streak = 0; s.failed.add(q.id); }
   } catch (e) { setNotice("err", errorText(e)); }
   s.busy = false; render();
@@ -967,6 +997,7 @@ function viewEstudio() {
       h("h1", { style: "font-size:clamp(20px,4vw,26px)" }, s.exam.title + " · Estudio"),
       h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "Salir")
     ),
+    mbar(Math.round((s.total - faltan) / s.total * 100), (s.total - faltan) + " de " + s.total + " resueltas", s.streak > 1 ? "🔥 Racha de " + s.streak : "Racha: " + s.streak, s.t0),
     h("div", { class: "qlayout" },
       h("div", { class: "stack qmain" },
         questionBlock(q, 0, s.total, {
@@ -1077,11 +1108,13 @@ function viewSim() {
             h("button", { class: "btn small", type: "button", onclick: () => { state.sim = null; go("inicio"); } }, "Sí, salir"),
             h("button", { class: "btn ghost small", type: "button", onclick: () => { s.salir = false; render(); } }, "Seguir en el examen")))
       : null,
+    mbar(Math.round((s.qs.length - sinResponder) / s.qs.length * 100), (s.qs.length - sinResponder) + "/" + s.qs.length + " respondidas", "Pregunta " + (s.i + 1) + " de " + s.qs.length, s.t0,
+      h("button", { class: "btn small mgrid", type: "button", onclick: () => { s.sheet = true; render(); } }, "▦ Preguntas")),
     h("div", { class: "qlayout" },
-      h("div", { class: "stack qmain" },
+      h("div", { class: "stack qmain", ontouchstart: swipeStart, ontouchend: (ev) => swipeEnd(ev, s) },
         questionBlock(q, s.i, s.qs.length, {
           picked: s.answers[q.id], revealed: null,
-          onPick: (id) => { s.answers[q.id] = id; s.confirm = false; render(); }
+          onPick: (id) => { s.answers[q.id] = id; s.confirm = false; vibra(10); render(); }
         }),
         s.confirm
           ? h("div", { class: "msg warn", role: "status" },
@@ -1095,8 +1128,21 @@ function viewSim() {
         )
       ),
       simPanel(s, sinResponder)
-    )
+    ),
+    s.sheet ? simSheet(s, sinResponder) : null
   );
+}
+
+let swipe0 = null;
+function swipeStart(ev) { const t = ev.touches[0]; swipe0 = ev.target.closest("textarea,input") ? null : { x: t.clientX, y: t.clientY }; }
+function swipeEnd(ev, s) {
+  if (!swipe0) return;
+  const t = ev.changedTouches[0], dx = t.clientX - swipe0.x, dy = t.clientY - swipe0.y;
+  swipe0 = null;
+  if (Math.abs(dx) < 80 || Math.abs(dy) > 50 || Math.abs(dx) < Math.abs(dy) * 2) return;
+  const j = s.i + (dx < 0 ? 1 : -1);
+  if (j < 0 || j >= s.qs.length) return;
+  simGoto(j, {});
 }
 
 async function simGoto(idx, btn) {
@@ -1106,7 +1152,7 @@ async function simGoto(idx, btn) {
   setNotice(null);
   try {
     await sendAnswer(s.qs[s.i].id);
-    s.i = idx; s.confirm = false;
+    s.i = idx; s.confirm = false; s.sheet = false;
     render();
     window.scrollTo(0, 0);
   } catch (e) {

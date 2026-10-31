@@ -306,3 +306,28 @@ label{color:var(--mute);font-weight:600}
 .qnav button.done{background:var(--soft);border-color:var(--soft);color:var(--tagfg)}
 .qnav button.cur{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .legend i.done{background:var(--soft);border-color:var(--soft)}.legend i.curfill{background:var(--accent);border-color:var(--accent)}
+
+/* Móvil: barra superior fija, acciones fijas abajo y hoja de preguntas */
+.mbar{display:none}
+.ring.mini{width:42px;height:42px}.ring.mini>div{width:32px;height:32px}
+@media(max-width:999px){
+  .mbar{display:flex;align-items:center;gap:10px;position:sticky;top:6px;z-index:20;background:var(--panel);box-shadow:var(--shadow);border-radius:16px;padding:8px 12px}
+  .mtxt{display:flex;flex-direction:column;min-width:0;flex:1;line-height:1.2}
+  .mtxt b{font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mtxt span{font-size:12px;color:var(--mute)}
+  .mclk{font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mclk b{font-weight:800}
+  .mgrid{white-space:nowrap}
+  .qmain>.nav{position:sticky;bottom:0;z-index:15;margin:14px -4px 0;padding:10px 4px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 78%,transparent)}
+  .qmain>.nav .mid{flex:1}
+  .qmain>.nav .mid .btn{flex:1}
+  .qmain>.nav>.btn{flex:1}
+}
+@media(max-width:480px){.mclk{display:none}}
+.sheetwrap{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end}
+.sheetbg{position:absolute;inset:0;background:rgba(11,18,32,.5)}
+.sheet{position:relative;width:100%;max-height:78vh;overflow:auto;background:var(--panel);border-radius:24px 24px 0 0;padding:10px 18px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:14px;animation:sheetup .22s ease-out}
+.grab{width:42px;height:5px;border-radius:99px;background:var(--line);margin:0 auto 2px}
+@keyframes sheetup{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+@media(min-width:1000px){.sheetwrap{display:none}}
+@media(prefers-reduced-motion:reduce){.sheet{animation:none}}
