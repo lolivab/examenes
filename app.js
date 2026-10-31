@@ -571,7 +571,7 @@ function profileCard() {
       if (error) throw error;
       if (data && data.user) state.session = { ...state.session, user: data.user };
       setNotice("ok", "Foto de perfil actualizada."); render();
-    } catch (e) { mostrar("err", "No se pudo subir la foto. Prueba con otra imagen."); }
+    } catch (e) { mostrar("err", "No se pudo subir la foto" + (e && e.message ? " (" + e.message + ")" : "") + ". Prueba con otra imagen."); }
   });
   const quitar = async () => {
     mostrar("warn", "Quitando foto…");
