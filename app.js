@@ -123,6 +123,7 @@ function setNotice(type, text) {
 
 function go(view, notice) {
   state.view = view;
+  state.menu = false;
   state.notice = notice || null;
   render();
   window.scrollTo(0, 0);
@@ -310,17 +311,44 @@ function render() {
   app.append((vistas[state.view] || viewVisitante)());
 }
 
-function topbar() {
+const avatarUrl = () => (state.session && state.session.user && state.session.user.user_metadata && state.session.user.user_metadata.avatar_url) || null;
+function avatarEl(extra) {
+  const url = avatarUrl();
   const inicial = (state.name || "?").trim().charAt(0).toUpperCase();
+  return url
+    ? h("img", { class: "avatar img " + (extra || ""), src: url, alt: "", "aria-hidden": "true" })
+    : h("span", { class: "avatar " + (extra || ""), "aria-hidden": "true" }, inicial);
+}
+
+function openCuenta(tab) {
+  state.cuentaTab = tab || "perfil";
+  if (state.cuentaTab === "stats") loadStats();
+  go("cuenta");
+}
+
+document.addEventListener("click", (ev) => {
+  if (state.menu && !ev.target.closest(".usermenu")) { state.menu = false; render(); }
+});
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && state.menu) { state.menu = false; render(); } });
+
+function topbar() {
+  const item = (txt, fn, ic) => h("button", { class: "mitem", type: "button", role: "menuitem", onclick: fn }, h("span", { "aria-hidden": "true" }, ic), txt);
   return h("header", { class: "topbar" },
     h("button", { class: "brand", type: "button", "aria-label": "PilotPrep, ir al inicio", onclick: () => go(hasActive() ? "inicio" : "planes") },
       h("img", { src: "img/icon.png", alt: "", width: "36", height: "36" }), h("span", {}, "PilotPrep")),
-    h("div", { class: "user" },
-      h("button", { class: "userlink" + (state.view === "cuenta" ? " on" : ""), type: "button", "aria-label": "Mi cuenta", title: "Mi cuenta", onclick: () => go("cuenta") },
-        h("span", { class: "avatar", "aria-hidden": "true" }, inicial),
-        h("span", { class: "uname" }, state.name)),
+    h("div", { class: "user usermenu" },
       state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openUsuarios() }, "Panel") : null,
-      h("button", { class: "btn ghost small", type: "button", onclick: () => sb.auth.signOut() }, "Cerrar sesión")
+      h("button", { class: "userlink" + (state.view === "cuenta" || state.menu ? " on" : ""), type: "button", "aria-haspopup": "menu", "aria-expanded": String(!!state.menu), "aria-label": "Menú de usuario",
+        onclick: (ev) => { ev.stopPropagation(); state.menu = !state.menu; render(); } },
+        avatarEl(), h("span", { class: "uname" }, state.name), h("span", { class: "caret", "aria-hidden": "true" }, "▾")),
+      state.menu ? h("div", { class: "menu", role: "menu" },
+        h("div", { class: "mhead" }, avatarEl("big"), h("div", {}, h("b", {}, state.name), h("span", {}, state.session && state.session.user ? state.session.user.email : ""))),
+        item("Mi perfil", () => openCuenta("perfil"), "👤"),
+        item("Mis estadísticas", () => openCuenta("stats"), "📊"),
+        item("Mi plan", () => openCuenta("plan"), "🎟️"),
+        item("Cambiar contraseña", () => openCuenta("seg"), "🔒"),
+        h("div", { class: "msep" }),
+        item("Cerrar sesión", () => sb.auth.signOut(), "↩")) : null
     )
   );
 }
@@ -464,7 +492,7 @@ function viewRecuperar() {
 }
 
 /* Mi cuenta */
-function viewCuenta() {
+function passwordCard() {
   const email = state.session && state.session.user ? state.session.user.email : "";
   const actual = h("input", { id: "pw0", type: "password", autocomplete: "current-password", required: true });
   const nueva = h("input", { id: "pw1", type: "password", autocomplete: "new-password", minlength: "8", required: true });
@@ -486,8 +514,9 @@ function viewCuenta() {
     if (nueva.value === actual.value) { mostrar("err", "La nueva contraseña debe ser distinta de la actual."); return; }
     enviar.disabled = true;
     try {
-      const { error: e1 } = await sb.auth.signInWithPassword({ email, password: actual.value });
+      const { data: lg, error: e1 } = await sb.auth.signInWithPassword({ email, password: actual.value });
       if (e1) { mostrar("err", "La contraseña actual no es correcta."); return; }
+      await reclamarSesion(lg && lg.session);
       const { error: e2 } = await sb.auth.updateUser({ password: nueva.value });
       if (e2) throw e2;
       form.reset();
@@ -498,15 +527,224 @@ function viewCuenta() {
       enviar.disabled = false;
     }
   });
+  return h("div", { class: "card stack", style: "max-width:520px" }, h("h2", {}, "Cambiar contraseña"), form);
+}
+
+/* ---------- Mi cuenta ---------- */
+
+async function reclamarSesion(session) {
+  // Tras un inicio de sesión nuevo en este mismo dispositivo, la sesión vigente pasa a ser esta.
+  const sid = session ? sessionIdOf(session) : null;
+  if (!sid) return;
+  await syncSession(true);
+  safe(() => authStorage.setItem("pp_sid", sid));
+}
+
+async function resizeAvatar(file) {
+  const bmp = await createImageBitmap(file);
+  const S = 256, c = document.createElement("canvas");
+  c.width = c.height = S;
+  const m = Math.min(bmp.width, bmp.height);
+  c.getContext("2d").drawImage(bmp, (bmp.width - m) / 2, (bmp.height - m) / 2, m, m, 0, 0, S, S);
+  return await new Promise((r) => c.toBlob(r, "image/jpeg", 0.86));
+}
+
+function profileCard() {
+  const u = state.session.user;
+  const msg = h("div", { class: "msg inline", role: "status", hidden: true });
+  const mostrar = (t, x) => { msg.className = "msg inline " + t; msg.textContent = x; msg.hidden = false; };
+  const pick = h("input", { type: "file", accept: "image/jpeg,image/png,image/webp", hidden: true });
+  const foto = h("div", { class: "avwrap" }, avatarEl("xl"));
+
+  pick.addEventListener("change", async () => {
+    const f = pick.files && pick.files[0]; pick.value = "";
+    if (!f) return;
+    if (!/^image\//.test(f.type)) { mostrar("err", "Elige una imagen (JPG, PNG o WebP)."); return; }
+    mostrar("warn", "Subiendo foto…");
+    try {
+      const blob = await resizeAvatar(f);
+      const path = u.id + "/avatar.jpg";
+      const up = await sb.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg", cacheControl: "3600" });
+      if (up.error) throw up.error;
+      const url = sb.storage.from("avatars").getPublicUrl(path).data.publicUrl + "?v=" + Date.now();
+      const { data, error } = await sb.auth.updateUser({ data: { avatar_url: url } });
+      if (error) throw error;
+      if (data && data.user) state.session = { ...state.session, user: data.user };
+      setNotice("ok", "Foto de perfil actualizada."); render();
+    } catch (e) { mostrar("err", "No se pudo subir la foto. Prueba con otra imagen."); }
+  });
+  const quitar = async () => {
+    mostrar("warn", "Quitando foto…");
+    try {
+      await sb.storage.from("avatars").remove([u.id + "/avatar.jpg"]);
+      const { data, error } = await sb.auth.updateUser({ data: { avatar_url: null } });
+      if (error) throw error;
+      if (data && data.user) state.session = { ...state.session, user: data.user };
+      setNotice("ok", "Foto eliminada."); render();
+    } catch (e) { mostrar("err", errorText(e)); }
+  };
+
+  const nombre = h("input", { id: "pname", type: "text", maxlength: "60", value: state.name, autocomplete: "name" });
+  const guardar = h("button", { class: "btn", type: "submit" }, "Guardar nombre");
+  const form = h("form", { novalidate: true, class: "stack" },
+    h("div", { class: "field" }, h("label", { for: "pname" }, "Nombre"), nombre), guardar);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const v = nombre.value.trim();
+    if (v.length < 2) { mostrar("err", "Escribe tu nombre (mínimo 2 caracteres)."); return; }
+    guardar.disabled = true;
+    try {
+      const { error } = await sb.from("profiles").update({ display_name: v }).eq("id", u.id);
+      if (error) throw error;
+      await sb.auth.updateUser({ data: { display_name: v } });
+      state.name = v; setNotice("ok", "Nombre actualizado."); render();
+    } catch (err) { mostrar("err", errorText(err)); guardar.disabled = false; }
+  });
+
+  const fecha = (x) => x ? new Date(x).toLocaleDateString("es-CL", { day: "numeric", month: "long", year: "numeric" }) : "—";
+  const planes = state.ents.filter(vigente).map((e) => e.plans.name + (e.expires_at ? " (hasta " + new Date(e.expires_at).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" }) + ")" : ""));
+  const dato = (k, v) => h("div", { class: "kv" }, h("span", {}, k), h("b", {}, v));
+
+  return h("div", { class: "stack" },
+    h("div", { class: "card stack" },
+      h("h2", {}, "Foto de perfil"),
+      h("div", { class: "row", style: "gap:18px" }, foto,
+        h("div", { class: "stack", style: "margin:0" },
+          h("div", { class: "row" },
+            h("button", { class: "btn", type: "button", onclick: () => pick.click() }, avatarUrl() ? "Cambiar foto" : "Subir foto"),
+            avatarUrl() ? h("button", { class: "btn ghost", type: "button", onclick: quitar }, "Quitar") : null),
+          h("p", { class: "hint" }, "JPG, PNG o WebP. Se recorta en cuadrado automáticamente.")),
+        pick), msg),
+    h("div", { class: "card stack", style: "max-width:520px" }, h("h2", {}, "Datos de la cuenta"), form),
+    h("div", { class: "card" }, h("h2", { style: "margin-bottom:6px" }, "Resumen"),
+      dato("Correo", u.email || "—"),
+      dato("Miembro desde", fecha(u.created_at)),
+      dato("Último acceso", fecha(u.last_sign_in_at)),
+      dato("Plan activo", planes.length ? planes.join(" · ") : "Sin plan activo"))
+  );
+}
+
+/* Estadísticas */
+async function loadStats() {
+  const st = { loading: true, data: null, error: null };
+  state.stats = st;
+  const { data, error } = await sb.rpc("my_stats");
+  if (state.stats !== st) return;
+  st.loading = false;
+  if (error) st.error = errorText(error); else st.data = data;
+  if (state.view === "cuenta" && state.cuentaTab === "stats") render();
+}
+
+function studyTopic(examId, topic) {
+  const ex = state.exams.find((e) => e.id === examId);
+  if (!ex || ex.locked || !ex.total) { go("planes"); return; }
+  startStudy(ex);
+  const t = (ex.topics || []).find((x) => x.name === topic);
+  if (t) { state.studyCfg.sel = new Set([topic]); state.studyCfg.count = Math.min(20, t.count); }
+  render();
+}
+
+const nivelDe = (t) => {
+  if (t.answered < 5) return { k: "low", txt: "Pocos datos" };
+  const p = t.correct / t.answered;
+  if (p >= 0.8) return { k: "ok", txt: "Fuerte" };
+  if (p >= 0.6) return { k: "mid", txt: "En desarrollo" };
+  return { k: "bad", txt: "Reforzar" };
+};
+
+function racha(days) {
+  const set = new Set(days || []);
+  const dia = (d) => d.toLocaleDateString("en-CA", { timeZone: "America/Santiago" });
+  let d = new Date(), n = 0;
+  if (!set.has(dia(d))) d = new Date(Date.now() - 86400000);
+  while (set.has(dia(d))) { n++; d = new Date(d.getTime() - 86400000); }
+  return n;
+}
+
+function statsView() {
+  const st = state.stats;
+  if (!st || st.loading) return loader();
+  if (st.error) return h("div", { class: "msg err" }, st.error);
+  const d = st.data;
+  if (!d || !Number(d.answered)) {
+    return h("div", { class: "card empty stack" },
+      h("h2", {}, "Aún no hay estadísticas"),
+      h("p", { class: "muted" }, "Responde preguntas en modo estudio o rinde un examen simulado y aquí verás tu avance, tus puntos fuertes y lo que te falta reforzar."),
+      h("div", { class: "row", style: "justify-content:center" }, h("button", { class: "btn", type: "button", onclick: () => go("inicio") }, "Empezar a practicar")));
+  }
+  const ans = Number(d.answered), ok = Number(d.correct), mal = Number(d.incorrect);
+  const pct = Math.round(ok / ans * 100);
+  const tile = (v, l, tono) => statTile(v, l, tono);
+  const topics = (d.topics || []).map((t) => ({ ...t, answered: Number(t.answered), correct: Number(t.correct), seen: Number(t.seen), total: Number(t.total), ra: Number(t.recent_answered), rc: Number(t.recent_correct) }));
+  topics.forEach((t) => { t.pct = Math.round(t.correct / t.answered * 100); t.nivel = nivelDe(t); t.cov = t.total ? Math.min(100, Math.round(t.seen / t.total * 100)) : 0; });
+  const conDatos = topics.filter((t) => t.answered >= 5);
+  const base = conDatos.length ? conDatos : topics;
+  const peor = base.slice().sort((a, b) => a.pct - b.pct)[0];
+  const mejor = conDatos.length > 1 ? conDatos.slice().sort((a, b) => b.pct - a.pct)[0] : null;
+  const pocoVista = topics.filter((t) => t.cov < 30 && t.total >= 10).sort((a, b) => a.cov - b.cov)[0];
+
+  const diag = [];
+  if (mejor && peor && mejor !== peor) diag.push(h("p", {}, "💪 Tu asignatura más fuerte es ", h("b", {}, mejor.topic), " (" + mejor.pct + "% de aciertos)."));
+  if (peor && peor.pct < 80) diag.push(h("p", {}, "🎯 Prioridad de estudio: ", h("b", {}, peor.topic), " (" + peor.pct + "% de aciertos en " + plural(peor.answered, "respuesta", "respuestas") + ")."));
+  else if (peor) diag.push(h("p", {}, "✅ Vas muy bien en todas las asignaturas con datos. Sigue practicando para mantener el nivel."));
+  if (pocoVista && (!peor || pocoVista.topic !== peor.topic)) diag.push(h("p", {}, "👀 En ", h("b", {}, pocoVista.topic), " solo has visto el " + pocoVista.cov + "% de las preguntas."));
+  if (conDatos.length === 0) diag.push(h("p", { class: "muted" }, "Responde al menos 5 preguntas por asignatura para afinar el diagnóstico."));
+
+  const filas = topics.slice().sort((a, b) => a.pct - b.pct).map((t) => {
+    const tend = t.ra >= 5 ? Math.round(t.rc / t.ra * 100) - t.pct : null;
+    return h("div", { class: "trow" },
+      h("div", { class: "thead" },
+        h("div", { class: "tname" }, h("b", {}, t.topic), h("span", {}, t.exam_title)),
+        h("span", { class: "lvl " + t.nivel.k }, t.nivel.txt)),
+      h("div", { class: "bar big " + t.nivel.k }, h("i", { style: "width:" + t.pct + "%" })),
+      h("div", { class: "tmeta" },
+        h("b", {}, t.pct + "%"),
+        h("span", {}, t.correct + " de " + t.answered + " acertadas"),
+        h("span", {}, "Visto " + Math.min(t.seen, t.total) + "/" + t.total + " (" + t.cov + "%)"),
+        tend != null && Math.abs(tend) >= 8 ? h("span", { class: tend > 0 ? "up" : "down" }, (tend > 0 ? "↑ Mejorando" : "↓ Bajando") + " (14 días)") : null,
+        t.nivel.k === "bad" || t.nivel.k === "mid" ? h("button", { class: "link", type: "button", onclick: () => studyTopic(t.exam_id, t.topic) }, "Estudiar esto →") : null));
+  });
+
+  const weak = (d.weak || []).map((w) => h("div", { class: "weak" },
+    h("p", {}, w.statement.length > 170 ? w.statement.slice(0, 167) + "…" : w.statement),
+    h("div", { class: "row", style: "gap:8px" },
+      h("span", { class: "pill" }, w.topic),
+      h("span", { class: "pill bad" }, "Fallada " + plural(Number(w.wrong), "vez", "veces")))));
+
+  const att = (d.attempts || []).slice().reverse();
+  const chart = att.length ? h("div", { class: "abars", role: "img", "aria-label": "Notas de tus últimos simulados" },
+    ...att.map((a) => { const p = Math.round(Number(a.score) / Number(a.total_questions) * 100);
+      return h("div", { class: "abar" }, h("span", { class: "av" }, p + "%"), h("i", { style: "height:" + Math.max(6, p) + "%" , class: p >= 60 ? "" : "low" }),
+        h("span", { class: "ad" }, new Date(a.finished_at).toLocaleDateString("es-CL", { day: "numeric", month: "short" }))); })) : null;
+
+  return h("div", { class: "stack" },
+    h("div", { class: "stiles four" },
+      tile(ans, "Respondidas"), tile(ok, "Acertadas", "ok"), tile(mal, "Erradas", mal ? "bad" : ""), tile(pct + "%", "Precisión")),
+    h("div", { class: "stiles four" },
+      tile(Number(d.attempts_done), "Simulados rendidos"),
+      tile(d.attempts_best != null ? d.attempts_best + "%" : "—", "Mejor simulado"),
+      tile(d.attempts_avg != null ? d.attempts_avg + "%" : "—", "Promedio simulados"),
+      tile((racha(d.days) > 1 ? "🔥 " : "") + racha(d.days) + (racha(d.days) === 1 ? " día" : " días"), "Racha de estudio")),
+    h("div", { class: "card stack diag" }, h("h2", {}, "Tu diagnóstico"), ...diag,
+      peor && peor.pct < 80 ? h("div", {}, h("button", { class: "btn", type: "button", onclick: () => studyTopic(peor.exam_id, peor.topic) }, "Estudiar " + peor.topic)) : null),
+    h("div", { class: "card stack" }, h("h2", {}, "Rendimiento por asignatura"), ...filas),
+    weak.length ? h("div", { class: "card stack" }, h("h2", {}, "Conceptos a reforzar"),
+      h("p", { class: "hint" }, "Las preguntas que más has fallado. Revisa estos temas con calma."), ...weak) : null,
+    att.length ? h("div", { class: "card stack" }, h("h2", {}, "Tus últimos simulados"), chart) : null
+  );
+}
+
+function viewCuenta() {
+  const tab = state.cuentaTab || "perfil";
+  const tabs = [["perfil", "Perfil"], ["stats", "Estadísticas"], ["plan", "Mi plan"], ["seg", "Seguridad"]];
+  const nav = h("div", { class: "seg ctabs", role: "tablist", "aria-label": "Mi cuenta" },
+    ...tabs.map(([k, l]) => h("button", { type: "button", role: "tab", "aria-pressed": String(tab === k), onclick: () => openCuenta(k) }, l)));
+  const cuerpo = tab === "stats" ? statsView() : tab === "plan" ? plansSection(true) : tab === "seg" ? passwordCard() : profileCard();
   return h("section", { class: "stack" },
     h("div", {}, h("button", { class: "btn ghost small", type: "button", onclick: () => go(hasActive() ? "inicio" : "planes") }, "← Volver")),
-    h("h1", {}, "Mi cuenta"),
-    h("div", { class: "card" },
-      h("p", { style: "font-weight:600" }, state.name),
-      h("p", { class: "muted" }, email)),
-    plansSection(true),
-    h("div", { class: "card", style: "max-width:460px" }, h("h2", { style: "margin-bottom:12px" }, "Cambiar contraseña"), form)
-  );
+    h("div", { class: "row", style: "gap:14px" }, avatarEl("lg"), h("div", {}, h("h1", {}, state.name), h("p", { class: "muted" }, state.session.user.email))),
+    nav,
+    cuerpo);
 }
 
 /* Planes */
@@ -1648,7 +1886,12 @@ sb.auth.onAuthStateChange((evento, session) => {
   }
   if (state.recovery) return;
   const mismoUsuario = session && state.session && state.session.user.id === session.user.id;
-  if (mismoUsuario) { state.session = session; return; }
+  if (mismoUsuario) {
+    state.session = session;
+    const sid = sessionIdOf(session);
+    if (sid && safe(() => authStorage.getItem("pp_sid"), null) !== sid) setTimeout(() => reclamarSesion(session), 0);
+    return;
+  }
   // Se evita llamar a Supabase dentro del callback para no bloquear el cliente.
   setTimeout(() => loadAccount(session), 0);
 });
