@@ -1494,6 +1494,22 @@ async function openCabina() {
   if (state.view === "cabina") render();
 }
 
+/* El visor (iframe aislado) pide el modelo 3D; se arma desde las partes privadas y se le entrega */
+let cabinaGlb = null;
+async function cabinaModelo() {
+  if (cabinaGlb) return cabinaGlb;
+  const { data, error } = await sb.from("privado_archivos").select("nombre, contenido").like("nombre", "cabina_glb_%").order("nombre");
+  if (error || !data || !data.length) throw error || new Error("Modelo no disponible");
+  const bin = atob(data.map((r) => r.contenido).join(""));
+  const buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  cabinaGlb = buf.buffer; return cabinaGlb;
+}
+window.addEventListener("message", async (ev) => {
+  if (!ev.data || ev.data.type !== "pp-ready" || !puedeCabina()) return;
+  const fr = document.querySelector(".cabinaframe"); if (!fr || ev.source !== fr.contentWindow) return;
+  try { const buf = await cabinaModelo(); fr.contentWindow.postMessage({ type: "pp-glb", buf: buf.slice(0) }, "*"); } catch { /* el visor muestra el aviso de carga */ }
+});
+
 function viewCabina() {
   const st = state.cabina;
   if (!puedeCabina() || !st) return h("p", { class: "muted" }, "Sin acceso.");
@@ -1503,7 +1519,8 @@ function viewCabina() {
       h("h2", {}, "Cabina A320 3D"), h("span", { class: "muted" }, "Prototipo privado")),
     st.error ? h("div", { class: "msg err", role: "alert" }, st.error)
       : st.html ? h("iframe", { class: "cabinaframe", title: "Cabina A320 3D", sandbox: "allow-scripts", allow: "fullscreen", srcdoc: st.html })
-      : h("p", { class: "muted", role: "status" }, "Cargando cabina…"));
+      : h("p", { class: "muted", role: "status" }, "Cargando cabina…"),
+    h("p", { class: "muted", style: "font-size:12px" }, "Modelo 3D: “A320 Cockpit 2” por davidmarton1987 (Sketchfab), licencia CC BY 4.0."));
 }
 
 /* Administración: listado de reportes */
