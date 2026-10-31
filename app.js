@@ -24,6 +24,7 @@ const app = document.getElementById("app");
 
 const state = {
   recovery: /type=recovery/.test(location.hash),
+  cabina: null,
   session: null,
   name: "",
   view: "cargando",
@@ -306,7 +307,7 @@ function render() {
   if (state.notice) app.append(h("div", { class: "msg " + state.notice.type, role: "status" }, state.notice.text));
   const vistas = {
     visitante: viewVisitante, usuarios: viewUsuarios, planes: viewPlanes, cuenta: viewCuenta, inicio: viewInicio,
-    recuperar: viewRecuperar, reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado
+    recuperar: viewRecuperar, reportes: viewReportes, estcfg: viewEstCfg, estudio: viewEstudio, simcfg: viewSimCfg, sim: viewSim, resultado: viewResultado, cabina: viewCabina
   };
   app.append((vistas[state.view] || viewVisitante)());
 }
@@ -337,6 +338,7 @@ function topbar() {
     h("button", { class: "brand", type: "button", "aria-label": "PilotPrep, ir al inicio", onclick: () => go(hasActive() ? "inicio" : "planes") },
       h("img", { src: "img/icon.png", alt: "", width: "36", height: "36" }), h("span", {}, "PilotPrep")),
     h("div", { class: "user usermenu" },
+      state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openCabina() }, "Cabina 3D") : null,
       state.isAdmin ? h("button", { class: "btn ghost small", type: "button", onclick: () => openUsuarios() }, "Panel") : null,
       h("button", { class: "userlink" + (state.view === "cuenta" || state.menu ? " on" : ""), type: "button", "aria-haspopup": "menu", "aria-expanded": String(!!state.menu), "aria-label": "Menú de usuario",
         onclick: (ev) => { ev.stopPropagation(); state.menu = !state.menu; render(); } },
@@ -1476,6 +1478,30 @@ function reportBox(questionId) {
   };
   pintar();
   return caja;
+}
+
+/* Cabina 3D A320 (prototipo privado): el contenido vive en la tabla privado_archivos, que solo lee un administrador (RLS) */
+async function openCabina() {
+  if (!state.isAdmin) return;
+  state.cabina = { html: null, error: null };
+  go("cabina");
+  const st = state.cabina;
+  const { data, error } = await sb.from("privado_archivos").select("contenido").eq("nombre", "cabina_a320.html").maybeSingle();
+  if (state.cabina !== st) return;
+  if (error) st.error = errorText(error); else if (!data) st.error = "El prototipo aún no está cargado."; else st.html = data.contenido;
+  if (state.view === "cabina") render();
+}
+
+function viewCabina() {
+  const st = state.cabina;
+  if (!state.isAdmin || !st) return h("p", { class: "muted" }, "Sin acceso.");
+  return h("div", { class: "stack" },
+    h("div", { class: "row" },
+      h("button", { class: "btn ghost small", type: "button", onclick: () => go(hasActive() ? "inicio" : "planes") }, "← Volver"),
+      h("h2", {}, "Cabina A320 3D"), h("span", { class: "muted" }, "Prototipo privado")),
+    st.error ? h("div", { class: "msg err", role: "alert" }, st.error)
+      : st.html ? h("iframe", { class: "cabinaframe", title: "Cabina A320 3D", sandbox: "allow-scripts", allow: "fullscreen", srcdoc: st.html })
+      : h("p", { class: "muted", role: "status" }, "Cargando cabina…"));
 }
 
 /* Administración: listado de reportes */

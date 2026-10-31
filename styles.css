@@ -408,3 +408,6 @@ label{color:var(--mute);font-weight:600}
   .menu{position:fixed;right:10px;left:10px;top:56px;min-width:0}
   .uname{display:none}
 }
+
+/* Cabina 3D (prototipo privado) */
+.cabinaframe{display:block;width:100%;height:calc(100vh - 170px);min-height:480px;border:1px solid var(--line);border-radius:16px;background:#0d1218}
