@@ -257,3 +257,52 @@ label{color:var(--mute);font-weight:600}
 .sharewrap{display:flex;justify-content:center}
 .sharecv{width:min(100%,380px);height:auto;border-radius:18px;box-shadow:var(--shadow)}
 .tag{border:0;font-family:inherit}
+
+/* Panel lateral y encabezado de pregunta */
+.qlayout{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start}
+.qmain>.card{padding:24px}
+.sidepanel{display:flex;flex-direction:column;gap:18px}
+@media(min-width:1000px){.qlayout{grid-template-columns:minmax(0,1fr) 330px}.sidepanel{position:sticky;top:16px}}
+.qhead{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 12px}
+.pill{display:inline-block;border-radius:999px;padding:4px 12px;font-size:12.5px;font-weight:700;background:var(--well);color:var(--mute)}
+.pill.strong{background:var(--soft);color:var(--tagfg)}
+.ringrow{display:flex;align-items:center;gap:16px}
+.ring{--p:0;flex:none;width:96px;height:96px;border-radius:50%;background:conic-gradient(var(--accent) calc(var(--p)*1%),var(--well) 0);display:grid;place-items:center;transition:background .4s}
+.ring>div{width:76px;height:76px;border-radius:50%;background:var(--panel);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.1}
+.ring b{font-size:20px;font-weight:800;letter-spacing:-.03em}
+.ring span{font-size:11px;color:var(--mute);font-weight:600}
+.ringtxt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ringtxt b{font-size:17px;font-weight:800}
+.ringtxt span{font-size:13px;color:var(--mute)}
+.clkrow{margin-top:4px;font-variant-numeric:tabular-nums}
+.clkrow b{font-size:13px;color:var(--ink)}
+.stiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stile{background:var(--well);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:2px}
+.stile b{font-size:22px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.stile span{font-size:12px;color:var(--mute);font-weight:600}
+.stile.ok{background:var(--okbg)}.stile.ok b{color:var(--okfg)}
+.stile.bad{background:var(--badbg)}.stile.bad b{color:var(--bad)}
+.ptitle{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);font-weight:800;margin-bottom:10px}
+.qmap{display:flex;flex-wrap:wrap;gap:5px}
+.qmap i{width:16px;height:16px;border-radius:5px;background:var(--well);border:1.5px solid var(--line)}
+.qmap i.ok{background:var(--ok);border-color:var(--ok)}
+.qmap i.mid{background:#F2B75A;border-color:#F2B75A}
+.qmap i.bad{background:var(--bad);border-color:var(--bad)}
+.qmap i.cur{box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:12px;font-size:12px;color:var(--mute)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:11px;border-radius:4px;background:var(--well);border:1.5px solid var(--line);display:inline-block}
+.legend i.ok{background:var(--ok);border-color:var(--ok)}.legend i.mid{background:#F2B75A;border-color:#F2B75A}.legend i.bad{background:var(--bad);border-color:var(--bad)}
+.legend i.cur{border-color:var(--accent);background:var(--panel);box-shadow:0 0 0 2px var(--soft)}
+.tbars{display:flex;flex-direction:column;gap:12px}
+.tbars .ptitle{margin-bottom:0}
+.tbl{display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-bottom:5px}
+.tbl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.tbl b{font-variant-numeric:tabular-nums}
+.tbar .bar{height:8px}
+.qnav{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:6px}
+.qnav button{min-height:40px;border-radius:10px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink);font:700 14px "Plus Jakarta Sans",system-ui,sans-serif;cursor:pointer;font-variant-numeric:tabular-nums}
+.qnav button:hover:not(:disabled){border-color:var(--accent)}
+.qnav button.done{background:var(--soft);border-color:var(--soft);color:var(--tagfg)}
+.qnav button.cur{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.legend i.done{background:var(--soft);border-color:var(--soft)}.legend i.curfill{background:var(--accent);border-color:var(--accent)}

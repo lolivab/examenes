@@ -694,11 +694,94 @@ function questionBlock(q, i, total, opts) {
   return h("div", { class: "card" },
     h("div", { class: "bar", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(total), "aria-valuenow": String(opts.pct != null ? opts.pct : i + 1) },
       h("i", { style: "width:" + (opts.pct != null ? opts.pct : Math.round(((i + 1) / total) * 100)) + "%" })),
-    h("div", { class: "qmeta" }, (opts.meta || "Pregunta " + (i + 1) + " de " + total) + (q.topic ? " · " + q.topic : "")),
+    h("div", { class: "qhead" },
+      h("span", { class: "pill strong" }, opts.meta || "Pregunta " + (i + 1) + " de " + total),
+      q.topic ? h("span", { class: "pill" }, q.topic) : null),
     h("h2", { class: "qtext" }, q.statement),
     figuresBlock(q),
     lista,
     opts.extra || null
+  );
+}
+
+/* ---------- panel lateral (estudio y simulado) ---------- */
+
+const fmtTime = (ms) => {
+  const t = Math.max(0, Math.floor(ms / 1000)), hh = Math.floor(t / 3600), mm = Math.floor((t % 3600) / 60), ss = t % 60;
+  const p2 = (n) => String(n).padStart(2, "0");
+  return (hh ? hh + ":" + p2(mm) : mm) + ":" + p2(ss);
+};
+setInterval(() => {
+  for (const e of document.querySelectorAll(".clk")) e.textContent = fmtTime(Date.now() - Number(e.dataset.t0));
+}, 1000);
+
+function ring(pct, big, small) {
+  return h("div", { class: "ring", style: "--p:" + Math.max(0, Math.min(100, pct)), role: "img", "aria-label": big + " " + (small || "") },
+    h("div", {}, h("b", {}, big), small ? h("span", {}, small) : null));
+}
+function statTile(valor, etiqueta, tono) {
+  return h("div", { class: "stile" + (tono ? " " + tono : "") }, h("b", {}, valor), h("span", {}, etiqueta));
+}
+function topicBars(items) {
+  if (items.length < 2) return null;
+  return h("div", { class: "tbars" },
+    h("h3", { class: "ptitle" }, "Por asignatura"),
+    ...items.map((t) => h("div", { class: "tbar" },
+      h("div", { class: "tbl" }, h("span", {}, t.name), h("b", {}, t.done + "/" + t.n)),
+      h("div", { class: "bar" }, h("i", { style: "width:" + (t.n ? Math.round(t.done / t.n * 100) : 0) + "%" })))));
+}
+const byTopic = (qs, isDone) => {
+  const m = new Map();
+  for (const q of qs) { const k = q.topic || "General"; const r = m.get(k) || { name: k, n: 0, done: 0 }; r.n++; if (isDone(q)) r.done++; m.set(k, r); }
+  return [...m.values()];
+};
+
+function studyPanel(s, faltan) {
+  const resueltas = s.total - faltan;
+  const pct = Math.round(resueltas / s.total * 100);
+  const aRepetir = s.pending.filter((x) => s.failed.has(x.id)).length;
+  const precision = s.attempts ? Math.round(resueltas / s.attempts * 100) : null;
+  const pendIds = new Set(s.pending.map((x) => x.id));
+  const mapa = h("div", { class: "qmap", "aria-label": "Mapa de preguntas" });
+  for (const q of s.qs) {
+    const hecha = !pendIds.has(q.id);
+    const cls = hecha ? (s.firstTry.has(q.id) ? "ok" : "mid") : (s.failed.has(q.id) ? "bad" : "");
+    mapa.append(h("i", { class: cls + (q.id === s.pending[0].id ? " cur" : "") }));
+  }
+  return h("aside", { class: "card sidepanel", "aria-label": "Tu avance" },
+    h("div", { class: "ringrow" }, ring(pct, pct + "%", "resuelto"),
+      h("div", { class: "ringtxt" }, h("b", {}, resueltas + " de " + s.total), h("span", {}, "preguntas resueltas"),
+        h("span", { class: "clkrow" }, "⏱ ", h("b", { class: "clk", "data-t0": String(s.t0) }, fmtTime(Date.now() - s.t0))))),
+    h("div", { class: "stiles" },
+      statTile(s.firstTry.size, "A la primera", "ok"),
+      statTile(aRepetir, "Por repetir", aRepetir ? "bad" : ""),
+      statTile(precision == null ? "—" : precision + "%", "Precisión"),
+      statTile(s.streak > 1 ? "🔥 " + s.streak : s.streak, "Racha actual")),
+    h("div", {}, h("h3", { class: "ptitle" }, "Tu sesión"), mapa,
+      h("div", { class: "legend" }, h("span", {}, h("i", { class: "ok" }), "A la primera"), h("span", {}, h("i", { class: "mid" }), "Tras repetir"),
+        h("span", {}, h("i", { class: "bad" }), "Por repetir"), h("span", {}, h("i", {}), "Nueva"))),
+    topicBars(byTopic(s.qs, (q) => !pendIds.has(q.id)))
+  );
+}
+
+function simPanel(s, sinResponder) {
+  const resp = s.qs.length - sinResponder;
+  const pct = Math.round(resp / s.qs.length * 100);
+  const nav = h("div", { class: "qnav", role: "group", "aria-label": "Ir a la pregunta" });
+  s.qs.forEach((q, idx) => {
+    nav.append(h("button", {
+      type: "button", class: (s.answers[q.id] ? "done " : "") + (idx === s.i ? "cur" : ""), "aria-label": "Pregunta " + (idx + 1) + (s.answers[q.id] ? " respondida" : " sin responder"),
+      "aria-current": idx === s.i ? "true" : null, onclick: (ev) => simGoto(idx, ev.currentTarget)
+    }, String(idx + 1)));
+  });
+  return h("aside", { class: "card sidepanel", "aria-label": "Tu avance" },
+    h("div", { class: "ringrow" }, ring(pct, resp + "/" + s.qs.length, "respondidas"),
+      h("div", { class: "ringtxt" }, h("b", {}, sinResponder ? plural(sinResponder, "pendiente", "pendientes") : "¡Todas listas!"), h("span", {}, "pregunta " + (s.i + 1) + " de " + s.qs.length),
+        h("span", { class: "clkrow" }, "⏱ ", h("b", { class: "clk", "data-t0": String(s.t0) }, fmtTime(Date.now() - s.t0))))),
+    h("div", {}, h("h3", { class: "ptitle" }, "Navegador de preguntas"), nav,
+      h("div", { class: "legend" }, h("span", {}, h("i", { class: "done" }), "Respondida"), h("span", {}, h("i", {}), "Sin responder"), h("span", {}, h("i", { class: "curfill" }), "Actual"))),
+    topicBars(byTopic(s.qs, (q) => !!s.answers[q.id])),
+    h("button", { class: "btn block", type: "button", onclick: (ev) => simFinish(ev.currentTarget) }, "Finalizar examen")
   );
 }
 
@@ -799,7 +882,7 @@ async function beginStudy(btn) {
     const todo = await loadQuestions(exam.id, null, todas ? null : [...sel]);
     if (!todo.length) { btn.disabled = false; setNotice("warn", "Este banco aún no tiene preguntas."); render(); return; }
     const qs = pickBalanced(todo, count);
-    state.study = { exam, pending: qs, total: qs.length, firstTry: new Set(), failed: new Set(), truth: {}, picked: null, result: null, rev: false, busy: false, attempts: 0, repeat: false };
+    state.study = { exam, pending: qs, total: qs.length, firstTry: new Set(), failed: new Set(), truth: {}, picked: null, result: null, rev: false, busy: false, attempts: 0, repeat: false, qs: qs.slice(), streak: 0, t0: Date.now() };
     go("estudio");
   } catch (e) {
     btn.disabled = false;
@@ -825,7 +908,7 @@ async function studyAnswer(btn) {
     if (error || typeof acierto !== "boolean") throw error || new Error("sin datos");
     s.attempts++;
     s.result = acierto ? "ok" : "bad";
-    if (s.result === "ok") { if (!s.failed.has(q.id)) s.firstTry.add(q.id); } else s.failed.add(q.id);
+    if (s.result === "ok") { s.streak++; if (!s.failed.has(q.id)) s.firstTry.add(q.id); } else { s.streak = 0; s.failed.add(q.id); }
   } catch (e) { setNotice("err", errorText(e)); }
   s.busy = false; render();
 }
@@ -836,7 +919,7 @@ async function studyReveal(btn) {
   try {
     await studyTruth(q);
     s.rev = true;
-    if (!s.result) { s.result = "bad"; s.failed.add(q.id); }
+    if (!s.result) { s.result = "bad"; s.failed.add(q.id); s.streak = 0; }
   } catch (e) { setNotice("err", errorText(e)); }
   render();
 }
@@ -882,25 +965,28 @@ function viewEstudio() {
   return h("section", { class: "stack" },
     h("div", { class: "row", style: "justify-content:space-between" },
       h("h1", { style: "font-size:clamp(20px,4vw,26px)" }, s.exam.title + " · Estudio"),
-      h("div", { class: "row" },
-        h("span", { class: "tag" }, "Por resolver: " + faltan + " de " + s.total),
-        h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "Salir"))
+      h("button", { class: "btn ghost small", type: "button", onclick: () => go("inicio") }, "Salir")
     ),
-    questionBlock(q, 0, s.total, {
-      picked: s.picked, revealed: s.rev ? t && { correct: t.correct } : null, verdict: s.result, extra,
-      pct: Math.round(((s.total - faltan) / s.total) * 100),
-      meta: s.repeat ? "Repetida" : "Nueva",
-      onPick: (id) => { s.picked = id; render(); }
-    }),
-    h("div", { class: "row nav" },
-      s.result
-        ? h("div", { class: "mid" }, s.rev ? null : h("button", { class: "btn ghost", type: "button", onclick: (ev) => studyReveal(ev.currentTarget) }, "Ver respuesta"))
-        : h("div", { class: "mid" },
-            h("button", { class: "btn", type: "button", disabled: !s.picked || s.busy, onclick: (ev) => studyAnswer(ev.currentTarget) }, "Responder"),
-            h("button", { class: "btn ghost", type: "button", onclick: (ev) => studyReveal(ev.currentTarget) }, "Ver respuesta")),
-      s.result
-        ? h("button", { class: "btn", type: "button", onclick: studyNext }, s.result === "ok" && faltan === 1 ? "Finalizar" : "Siguiente")
-        : null
+    h("div", { class: "qlayout" },
+      h("div", { class: "stack qmain" },
+        questionBlock(q, 0, s.total, {
+          picked: s.picked, revealed: s.rev ? t && { correct: t.correct } : null, verdict: s.result, extra,
+          pct: Math.round(((s.total - faltan) / s.total) * 100),
+          meta: s.repeat ? "Repetida" : "Nueva",
+          onPick: (id) => { s.picked = id; render(); }
+        }),
+        h("div", { class: "row nav" },
+          s.result
+            ? h("div", { class: "mid" }, s.rev ? null : h("button", { class: "btn ghost", type: "button", onclick: (ev) => studyReveal(ev.currentTarget) }, "Ver respuesta"))
+            : h("div", { class: "mid" },
+                h("button", { class: "btn", type: "button", disabled: !s.picked || s.busy, onclick: (ev) => studyAnswer(ev.currentTarget) }, "Responder"),
+                h("button", { class: "btn ghost", type: "button", onclick: (ev) => studyReveal(ev.currentTarget) }, "Ver respuesta")),
+          s.result
+            ? h("button", { class: "btn", type: "button", onclick: studyNext }, s.result === "ok" && faltan === 1 ? "Finalizar" : "Siguiente")
+            : null
+        )
+      ),
+      studyPanel(s, faltan)
     )
   );
 }
@@ -963,7 +1049,7 @@ async function startSim(btn) {
     const { data, error } = await sb.rpc("start_attempt_by_topics", { p_exam_id: exam.id, p_count: count, p_topics: topics });
     if (error) throw error;
     const qs = await loadQuestions(exam.id, data.question_ids);
-    state.sim = { exam, attemptId: data.attempt_id, qs, i: 0, answers: {}, sent: {}, confirm: false, score: null, review: null, sel: new Set(sel) };
+    state.sim = { exam, attemptId: data.attempt_id, qs, i: 0, answers: {}, sent: {}, confirm: false, score: null, review: null, sel: new Set(sel), t0: Date.now() };
     go("sim");
   } catch (e) {
     btn.disabled = false;
@@ -982,12 +1068,8 @@ function viewSim() {
   return h("section", { class: "stack" },
     h("div", { class: "row", style: "justify-content:space-between" },
       h("h1", { style: "font-size:clamp(20px,4vw,26px)" }, s.exam.title + " · Simulado"),
-      h("span", { class: "tag" }, "Respondidas " + (s.qs.length - sinResponder) + "/" + s.qs.length)
+      h("button", { class: "btn ghost small", type: "button", onclick: () => { s.salir = true; render(); window.scrollTo(0, 0); } }, "Salir del examen")
     ),
-    questionBlock(q, s.i, s.qs.length, {
-      picked: s.answers[q.id], revealed: null,
-      onPick: (id) => { s.answers[q.id] = id; s.confirm = false; render(); }
-    }),
     s.salir
       ? h("div", { class: "msg warn", role: "alert" },
           h("p", {}, "¿Salir del examen? Tu intento no se calificará y perderás tu avance."),
@@ -995,19 +1077,42 @@ function viewSim() {
             h("button", { class: "btn small", type: "button", onclick: () => { state.sim = null; go("inicio"); } }, "Sí, salir"),
             h("button", { class: "btn ghost small", type: "button", onclick: () => { s.salir = false; render(); } }, "Seguir en el examen")))
       : null,
-    s.confirm
-      ? h("div", { class: "msg warn", role: "status" },
-          "Tienes " + plural(sinResponder, "pregunta sin responder", "preguntas sin responder") + ". Pulsa Finalizar de nuevo para terminar igual.")
-      : null,
-    h("div", { class: "row nav" },
-      h("button", { class: "btn ghost", type: "button", disabled: s.i === 0, onclick: (ev) => simMove(-1, ev.currentTarget) }, "Anterior"),
-      ultima
-        ? h("button", { class: "btn", type: "button", onclick: (ev) => simFinish(ev.currentTarget) }, "Finalizar")
-        : h("button", { class: "btn", type: "button", onclick: (ev) => simMove(1, ev.currentTarget) }, "Siguiente")
-    ),
-    h("div", { class: "row" },
-      h("button", { class: "btn ghost small", type: "button", onclick: () => { s.salir = true; render(); window.scrollTo(0, 0); } }, "Salir del examen"))
+    h("div", { class: "qlayout" },
+      h("div", { class: "stack qmain" },
+        questionBlock(q, s.i, s.qs.length, {
+          picked: s.answers[q.id], revealed: null,
+          onPick: (id) => { s.answers[q.id] = id; s.confirm = false; render(); }
+        }),
+        s.confirm
+          ? h("div", { class: "msg warn", role: "status" },
+              "Tienes " + plural(sinResponder, "pregunta sin responder", "preguntas sin responder") + ". Pulsa Finalizar de nuevo para terminar igual.")
+          : null,
+        h("div", { class: "row nav" },
+          h("button", { class: "btn ghost", type: "button", disabled: s.i === 0, onclick: (ev) => simMove(-1, ev.currentTarget) }, "Anterior"),
+          ultima
+            ? h("button", { class: "btn", type: "button", onclick: (ev) => simFinish(ev.currentTarget) }, "Finalizar")
+            : h("button", { class: "btn", type: "button", onclick: (ev) => simMove(1, ev.currentTarget) }, "Siguiente")
+        )
+      ),
+      simPanel(s, sinResponder)
+    )
   );
+}
+
+async function simGoto(idx, btn) {
+  const s = state.sim;
+  if (idx === s.i) return;
+  btn.disabled = true;
+  setNotice(null);
+  try {
+    await sendAnswer(s.qs[s.i].id);
+    s.i = idx; s.confirm = false;
+    render();
+    window.scrollTo(0, 0);
+  } catch (e) {
+    setNotice("err", errorText(e));
+    render();
+  }
 }
 
 async function sendAnswer(qid) {
